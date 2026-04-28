@@ -2,6 +2,10 @@
 
 defined('ABSPATH') || exit;
 
+if (class_exists('WSZ_Woo_Subzero', false)) {
+    return;
+}
+
 final class WSZ_Woo_Subzero
 {
     private static ?WSZ_Woo_Subzero $instance = null;

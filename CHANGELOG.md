@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.3] - 2026-04-28
+
+### Fixed
+
+- Prevented duplicate bootstrap execution in the same request by adding an early bootstrap-loaded guard in the plugin entry file.
+- Added defensive class guards for core bootstrap/subscription manager loading to prevent `Cannot declare class WSZ_Subscription_Manager` fatals.
+- Removed root Composer classmap autoload for plugin source classes to avoid competing class-loading paths.
+
+### Changed
+
+- Removed repository-only README hero image asset from package content.
+
 ## [0.1.2] - 2026-04-27
 
 ### Added

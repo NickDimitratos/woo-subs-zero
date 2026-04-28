@@ -11,12 +11,6 @@
         "php-stubs/wordpress-stubs": "^6.8",
         "php-stubs/woocommerce-stubs": "^9.9"
     },
-    "autoload": {
-        "classmap": [
-            "includes/",
-            "src/"
-        ]
-    },
     "scripts": {
         "test": "phpunit -c phpunit.xml.dist",
         "lint": "find . -name '*.php' -print0 | xargs -0 -n1 php -l"

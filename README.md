@@ -1,9 +1,5 @@
 # Woo Subs-Zero
 
-<p align="center">
-  <img src="./wsz-subs-zerο.png" alt="Woo Subs-Zero hero image" width="100%" />
-</p>
-
 > [!IMPORTANT]
 > **Open Source Beta**
 > This plugin is open source and currently in beta.
