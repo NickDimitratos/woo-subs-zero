@@ -2,7 +2,7 @@
 
 defined('ABSPATH') || exit;
 
-class WSZ_Paynl_Gateway
+class WSZ_Tokenized_Gateway
 {
     private WSZ_Subscription_Manager $subscription_manager;
 
@@ -16,14 +16,16 @@ class WSZ_Paynl_Gateway
 
     public function init(): void
     {
-        add_action('woocommerce_scheduled_subscription_payment_paynl', array($this, 'process_scheduled_payment'), 10, 2);
+        foreach ($this->get_gateway_ids() as $gateway_id) {
+            add_action("woocommerce_scheduled_subscription_payment_{$gateway_id}", array($this, 'process_scheduled_payment'), 10, 2);
 
-        add_filter(
-            'wsz_subs_gateway_contract_flags_paynl',
-            static function (array $supports): array {
-                return array_values(array_unique(array_merge($supports, self::required_supports_flags())));
-            }
-        );
+            add_filter(
+                "wsz_subs_gateway_contract_flags_{$gateway_id}",
+                static function (array $supports): array {
+                    return array_values(array_unique(array_merge($supports, self::required_supports_flags())));
+                }
+            );
+        }
     }
 
     public static function required_supports_flags(): array
@@ -44,6 +46,29 @@ class WSZ_Paynl_Gateway
         );
     }
 
+    private function get_gateway_ids(): array
+    {
+        $gateway_ids = apply_filters('wsz_subs_tokenized_gateway_ids', array());
+
+        if (!is_array($gateway_ids)) {
+            return array();
+        }
+
+        $normalized = array();
+
+        foreach ($gateway_ids as $gateway_id) {
+            $normalized_id = sanitize_key((string) $gateway_id);
+
+            if ('' === $normalized_id) {
+                continue;
+            }
+
+            $normalized[] = $normalized_id;
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
     /**
      * @param mixed $amount
      * @param mixed $renewal_order
@@ -57,20 +82,20 @@ class WSZ_Paynl_Gateway
         $subscription = $this->resolve_subscription_from_renewal_order($renewal_order);
 
         if (!($subscription instanceof WC_Order)) {
-            $renewal_order->update_status('failed', __('Could not resolve source subscription for Pay.nl renewal.', 'woo-subzero'));
+            $renewal_order->update_status('failed', __('Could not resolve source subscription for renewal.', 'woo-subzero'));
             return;
         }
 
         $token = $this->payment_handler->get_payment_token_for_subscription($subscription);
 
         if (!($token instanceof WC_Payment_Token)) {
-            $renewal_order->update_status('failed', __('Missing or invalid payment token for Pay.nl renewal.', 'woo-subzero'));
+            $renewal_order->update_status('failed', __('Missing or invalid payment token for renewal.', 'woo-subzero'));
             return;
         }
 
         $recurring_id = (string) $token->get_token();
         if ('' === $recurring_id) {
-            $renewal_order->update_status('failed', __('Recurring reference is empty for Pay.nl token.', 'woo-subzero'));
+            $renewal_order->update_status('failed', __('Recurring reference is empty for payment token.', 'woo-subzero'));
             return;
         }
 
@@ -89,7 +114,7 @@ class WSZ_Paynl_Gateway
 
         $message = !empty($charge_result['message'])
             ? sanitize_text_field((string) $charge_result['message'])
-            : __('Pay.nl recurring charge failed.', 'woo-subzero');
+            : __('Recurring charge failed.', 'woo-subzero');
 
         $renewal_order->update_status('failed', $message);
     }
@@ -134,7 +159,7 @@ class WSZ_Paynl_Gateway
         WC_Order $subscription
     ): array {
         $preflight = apply_filters(
-            'wsz_subs_paynl_charge_result',
+            'wsz_subs_recurring_charge_result',
             null,
             $recurring_id,
             $amount,
@@ -147,40 +172,44 @@ class WSZ_Paynl_Gateway
             return $preflight;
         }
 
-        if (!class_exists('Paynl\\Transaction')) {
+        $charge_callback = apply_filters(
+            'wsz_subs_recurring_charge_callback',
+            null,
+            $recurring_id,
+            $amount,
+            $currency,
+            $renewal_order,
+            $subscription
+        );
+
+        if (!is_callable($charge_callback)) {
             return array(
                 'paid' => false,
-                'message' => __('Pay.nl SDK not installed.', 'woo-subzero'),
+                'message' => __('Recurring charge handler not configured.', 'woo-subzero'),
             );
         }
 
         try {
-            $response = Paynl\Transaction::byRecurringId(
-                array(
-                    'recurringId' => $recurring_id,
-                    'amount' => (int) round($amount * 100),
-                    'currency' => strtoupper($currency),
-                )
+            $result = call_user_func(
+                $charge_callback,
+                $recurring_id,
+                $amount,
+                $currency,
+                $renewal_order,
+                $subscription
             );
 
-            $is_paid = is_object($response) && method_exists($response, 'isPaid')
-                ? (bool) $response->isPaid()
-                : false;
-
-            $transaction_id = is_object($response) && method_exists($response, 'getTransactionId')
-                ? (string) $response->getTransactionId()
-                : '';
+            if (is_array($result) && array_key_exists('paid', $result)) {
+                return $result;
+            }
 
             return array(
-                'paid' => $is_paid,
-                'transaction_id' => $transaction_id,
-                'message' => $is_paid
-                    ? __('Pay.nl recurring charge completed.', 'woo-subzero')
-                    : __('Pay.nl recurring charge not paid.', 'woo-subzero'),
+                'paid' => false,
+                'message' => __('Recurring charge handler returned an invalid response.', 'woo-subzero'),
             );
         } catch (Throwable $throwable) {
             wc_get_logger()->error(
-                sprintf('Pay.nl renewal error: %s', $throwable->getMessage()),
+                sprintf('Recurring renewal error: %s', $throwable->getMessage()),
                 array('source' => 'woo-subzero')
             );
 

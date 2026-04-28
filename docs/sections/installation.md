@@ -18,8 +18,8 @@ For production packaging:
 2. In WordPress Admin go to Plugins > Add New > Upload Plugin.
 3. Upload the ZIP and activate.
 
-## Optional: Pay.nl SDK
+## Optional: Recurring Charge Provider Integration
 
-If you use Pay.nl and want SDK-backed calls inside this plugin:
+If you want SDK-backed recurring charge calls inside this plugin:
 
-- `composer require paynl/php-sdk`
+- Hook `wsz_subs_recurring_charge_callback` with your provider implementation.

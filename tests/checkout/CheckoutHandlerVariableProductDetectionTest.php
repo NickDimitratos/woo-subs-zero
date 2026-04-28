@@ -13,7 +13,7 @@ if (!function_exists('wc_get_product')) {
     {
         $product_id = (int) $product_id;
 
-        return $GLOBALS['km_checkout_test_products'][$product_id] ?? null;
+        return $GLOBALS['wsz_checkout_test_products'][$product_id] ?? null;
     }
 }
 
@@ -26,12 +26,12 @@ final class CheckoutHandlerVariableProductDetectionTest extends TestCase
     {
         parent::setUp();
 
-        $GLOBALS['km_checkout_test_products'] = array();
+        $GLOBALS['wsz_checkout_test_products'] = array();
     }
 
     protected function tearDown(): void
     {
-        unset($GLOBALS['km_checkout_test_products']);
+        unset($GLOBALS['wsz_checkout_test_products']);
 
         parent::tearDown();
     }
@@ -54,7 +54,7 @@ final class CheckoutHandlerVariableProductDetectionTest extends TestCase
             900
         );
 
-        $GLOBALS['km_checkout_test_products'][900] = $parent_product;
+        $GLOBALS['wsz_checkout_test_products'][900] = $parent_product;
 
         $order = new CheckoutHandlerDummyOrder(
             array(new CheckoutHandlerDummyOrderItemProduct($variation_product))
@@ -94,7 +94,7 @@ final class CheckoutHandlerVariableProductDetectionTest extends TestCase
             910
         );
 
-        $GLOBALS['km_checkout_test_products'][910] = $parent_product;
+        $GLOBALS['wsz_checkout_test_products'][910] = $parent_product;
 
         $order = new CheckoutHandlerDummyOrder(
             array(new CheckoutHandlerDummyOrderItemProduct($variation_product))
@@ -140,7 +140,7 @@ final class CheckoutHandlerVariableProductDetectionTest extends TestCase
             920
         );
 
-        $GLOBALS['km_checkout_test_products'][920] = $parent_product;
+        $GLOBALS['wsz_checkout_test_products'][920] = $parent_product;
 
         $order = new CheckoutHandlerDummyOrder(
             array(new CheckoutHandlerDummyOrderItemProduct($variation_product))

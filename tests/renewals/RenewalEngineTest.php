@@ -9,10 +9,10 @@ if (!defined('ABSPATH')) {
 if (!function_exists('as_schedule_single_action')) {
     function as_schedule_single_action($timestamp, $hook, $args = array(), $group = '', $unique = false)
     {
-        $return = $GLOBALS['km_test_schedule_return'] ?? 1;
+        $return = $GLOBALS['wsz_test_schedule_return'] ?? 1;
 
         if (is_numeric($return) ? ((int) $return > 0) : (true === $return)) {
-            $GLOBALS['km_test_scheduled_actions'][] = array(
+            $GLOBALS['wsz_test_scheduled_actions'][] = array(
                 'timestamp' => (int) $timestamp,
                 'hook' => (string) $hook,
                 'args' => $args,
@@ -28,7 +28,7 @@ if (!function_exists('as_schedule_single_action')) {
 if (!function_exists('wcs_create_renewal_order')) {
     function wcs_create_renewal_order($subscription)
     {
-        return $GLOBALS['km_test_wcs_renewal_order'] ?? null;
+        return $GLOBALS['wsz_test_wcs_renewal_order'] ?? null;
     }
 }
 
@@ -63,8 +63,8 @@ if (!function_exists('wc_get_order')) {
 
         $order_id = (int) $order_id;
 
-        if (isset($GLOBALS['km_test_orders'][$order_id])) {
-            return $GLOBALS['km_test_orders'][$order_id];
+        if (isset($GLOBALS['wsz_test_orders'][$order_id])) {
+            return $GLOBALS['wsz_test_orders'][$order_id];
         }
 
         if (isset($GLOBALS['wsz_test_card_orders'][$order_id])) {
@@ -86,19 +86,19 @@ final class RenewalEngineTest extends TestCase
     {
         parent::setUp();
 
-        $GLOBALS['km_test_scheduled_actions'] = array();
-        $GLOBALS['km_test_schedule_return'] = 1;
-        $GLOBALS['km_test_wcs_renewal_order'] = null;
-        $GLOBALS['km_test_orders'] = array();
+        $GLOBALS['wsz_test_scheduled_actions'] = array();
+        $GLOBALS['wsz_test_schedule_return'] = 1;
+        $GLOBALS['wsz_test_wcs_renewal_order'] = null;
+        $GLOBALS['wsz_test_orders'] = array();
         $GLOBALS['wsz_test_card_orders'] = array();
     }
 
     protected function tearDown(): void
     {
-        unset($GLOBALS['km_test_scheduled_actions']);
-        unset($GLOBALS['km_test_schedule_return']);
-        unset($GLOBALS['km_test_wcs_renewal_order']);
-        unset($GLOBALS['km_test_orders']);
+        unset($GLOBALS['wsz_test_scheduled_actions']);
+        unset($GLOBALS['wsz_test_schedule_return']);
+        unset($GLOBALS['wsz_test_wcs_renewal_order']);
+        unset($GLOBALS['wsz_test_orders']);
         unset($GLOBALS['wsz_test_card_orders']);
 
         parent::tearDown();
@@ -265,7 +265,7 @@ final class RenewalEngineTest extends TestCase
         $method->setAccessible(true);
         $method->invoke($engine, $subscription);
 
-        $this->assertCount(0, $GLOBALS['km_test_scheduled_actions']);
+        $this->assertCount(0, $GLOBALS['wsz_test_scheduled_actions']);
     }
 
     public function test_process_renewal_skips_charge_when_next_payment_reaches_term_end(): void
@@ -321,7 +321,7 @@ final class RenewalEngineTest extends TestCase
         $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
         $engine->process_renewal(910, '');
 
-        $this->assertCount(0, $GLOBALS['km_test_scheduled_actions']);
+        $this->assertCount(0, $GLOBALS['wsz_test_scheduled_actions']);
     }
 
     public function test_schedule_renewal_for_timestamp_enqueues_immediate_action_when_due_now(): void
@@ -350,9 +350,9 @@ final class RenewalEngineTest extends TestCase
         $before = current_time('timestamp', true);
         $method->invoke($engine, $subscription, $before);
 
-        $this->assertCount(1, $GLOBALS['km_test_scheduled_actions']);
+        $this->assertCount(1, $GLOBALS['wsz_test_scheduled_actions']);
 
-        $scheduled = $GLOBALS['km_test_scheduled_actions'][0];
+        $scheduled = $GLOBALS['wsz_test_scheduled_actions'][0];
 
         $this->assertSame('wsz_subs_process_renewal', $scheduled['hook']);
         $this->assertSame('wsz-subscriptions', $scheduled['group']);
@@ -364,7 +364,7 @@ final class RenewalEngineTest extends TestCase
 
     public function test_schedule_renewal_for_timestamp_does_not_persist_key_when_scheduler_fails(): void
     {
-        $GLOBALS['km_test_schedule_return'] = 0;
+        $GLOBALS['wsz_test_schedule_return'] = 0;
 
         $subscription = $this->createMock(WC_Order::class);
         $subscription->method('get_id')->willReturn(888);
@@ -387,7 +387,7 @@ final class RenewalEngineTest extends TestCase
         $method->setAccessible(true);
         $method->invoke($engine, $subscription, current_time('timestamp', true));
 
-        $this->assertCount(0, $GLOBALS['km_test_scheduled_actions']);
+        $this->assertCount(0, $GLOBALS['wsz_test_scheduled_actions']);
     }
 
     public function test_schedule_first_renewal_backfills_missing_end_timestamp_for_finite_plan(): void
@@ -452,7 +452,7 @@ final class RenewalEngineTest extends TestCase
 
         $engine->schedule_first_renewal($subscription);
 
-        $this->assertCount(1, $GLOBALS['km_test_scheduled_actions']);
+        $this->assertCount(1, $GLOBALS['wsz_test_scheduled_actions']);
     }
 
     public function test_schedule_first_renewal_recovers_missing_length_from_parent_order_item_meta(): void
@@ -523,7 +523,7 @@ final class RenewalEngineTest extends TestCase
             }
         };
 
-        $GLOBALS['km_test_orders'][555] = $parent_order;
+        $GLOBALS['wsz_test_orders'][555] = $parent_order;
         $GLOBALS['wsz_test_card_orders'][555] = $parent_order;
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -571,7 +571,7 @@ final class RenewalEngineTest extends TestCase
 
         $engine->schedule_first_renewal($subscription);
 
-        $this->assertCount(1, $GLOBALS['km_test_scheduled_actions']);
+        $this->assertCount(1, $GLOBALS['wsz_test_scheduled_actions']);
 
         $length_meta_update_found = false;
 
@@ -634,7 +634,7 @@ final class RenewalEngineTest extends TestCase
             ->expects($this->never())
             ->method('is_paid');
 
-        $GLOBALS['km_test_wcs_renewal_order'] = $renewal_order;
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $renewal_order;
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $subscription_manager

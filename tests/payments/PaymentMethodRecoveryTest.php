@@ -11,10 +11,10 @@ final class PaymentMethodRecoveryTest extends TestCase
     {
         parent::setUp();
 
-        $GLOBALS['km_wc_test_container'] = new PaymentMethodRecoveryWooContainer(
+        $GLOBALS['wsz_wc_test_container'] = new PaymentMethodRecoveryWooContainer(
             new PaymentMethodRecoveryGatewayLoader(
                 array(
-                    'paynl' => (object) array('enabled' => 'yes'),
+                    'tokenized_gateway' => (object) array('enabled' => 'yes'),
                     'stripe' => (object) array('enabled' => 'yes'),
                 ),
                 array()
@@ -37,7 +37,7 @@ final class PaymentMethodRecoveryTest extends TestCase
         $subscription
             ->expects($this->once())
             ->method('set_payment_method')
-            ->with('paynl');
+            ->with('tokenized_gateway');
 
         $subscription
             ->expects($this->once())
@@ -45,7 +45,7 @@ final class PaymentMethodRecoveryTest extends TestCase
 
         $handler->handle_failing_payment_method_update(
             $subscription,
-            'paynl',
+            'tokenized_gateway',
             array('token_id' => 123)
         );
     }

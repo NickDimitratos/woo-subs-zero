@@ -8,7 +8,7 @@ class WSZ_Payment_Handler
 
     private ?WSZ_Test_Card_Gateway_Integration $test_card_gateway = null;
 
-    private ?WSZ_Paynl_Gateway $paynl_gateway = null;
+    private ?WSZ_Tokenized_Gateway $tokenized_gateway = null;
 
     public function __construct(WSZ_Subscription_Manager $subscription_manager)
     {
@@ -20,8 +20,8 @@ class WSZ_Payment_Handler
         $this->test_card_gateway = new WSZ_Test_Card_Gateway_Integration();
         $this->test_card_gateway->init();
 
-        $this->paynl_gateway = new WSZ_Paynl_Gateway($this->subscription_manager, $this);
-        $this->paynl_gateway->init();
+        $this->tokenized_gateway = new WSZ_Tokenized_Gateway($this->subscription_manager, $this);
+        $this->tokenized_gateway->init();
 
         add_action('woocommerce_subscription_failing_payment_method_updated', array($this, 'handle_failing_payment_method_update'), 10, 3);
         add_action('woocommerce_subscriptions_changed_failing_payment_method', array($this, 'handle_failing_payment_method_update'), 10, 3);

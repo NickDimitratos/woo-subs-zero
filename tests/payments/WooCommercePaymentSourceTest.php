@@ -11,7 +11,7 @@ final class WooCommercePaymentSourceTest extends TestCase
     {
         parent::setUp();
 
-        $GLOBALS['km_wc_test_container'] = null;
+        $GLOBALS['wsz_wc_test_container'] = null;
     }
 
     public function test_gateway_available_when_registered_and_enabled(): void
@@ -97,7 +97,7 @@ final class WooCommercePaymentSourceTest extends TestCase
 
     private function setGatewayContext(array $registered, array $available): void
     {
-        $GLOBALS['km_wc_test_container'] = new WooGatewayTestContainer(
+        $GLOBALS['wsz_wc_test_container'] = new WooGatewayTestContainer(
             new WooGatewayTestLoader($registered, $available)
         );
     }

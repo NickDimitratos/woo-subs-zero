@@ -1,7 +1,7 @@
 # Woo Subs-Zero
 
 <p align="center">
-  <img src="./wsz-nick-dimitratos.png" alt="Woo Subs-Zero hero image" width="100%" />
+  <img src="./wsz-subs-zerο.png" alt="Woo Subs-Zero hero image" width="100%" />
 </p>
 
 > [!IMPORTANT]
@@ -55,7 +55,7 @@ Read more: [Requirements](docs/sections/requirements.md)
 
 ## Installation
 
-Supports source installation and ZIP upload workflows, with optional Pay.nl SDK integration.
+Supports source installation and ZIP upload workflows, with optional recurring charge provider integration.
 
 Read more: [Installation](docs/sections/installation.md)
 

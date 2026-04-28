@@ -46,7 +46,7 @@ if (!function_exists('wc_get_page_screen_id')) {
 if (!function_exists('add_meta_box')) {
     function add_meta_box($id, $title, $callback, $screen, $context = 'advanced', $priority = 'default', $callback_args = null)
     {
-        $GLOBALS['km_admin_test_meta_boxes'][] = array(
+        $GLOBALS['wsz_admin_test_meta_boxes'][] = array(
             'id' => $id,
             'screen' => $screen,
         );
@@ -56,7 +56,7 @@ if (!function_exists('add_meta_box')) {
 if (!function_exists('remove_meta_box')) {
     function remove_meta_box($id, $screen, $context)
     {
-        $GLOBALS['km_admin_test_removed_meta_boxes'][] = array(
+        $GLOBALS['wsz_admin_test_removed_meta_boxes'][] = array(
             'id' => (string) $id,
             'screen' => (string) $screen,
             'context' => (string) $context,
@@ -67,7 +67,7 @@ if (!function_exists('remove_meta_box')) {
 if (!function_exists('as_get_scheduled_actions')) {
     function as_get_scheduled_actions($query = array(), $return_format = 'OBJECT')
     {
-        $actions = $GLOBALS['km_admin_test_actions'] ?? array();
+        $actions = $GLOBALS['wsz_admin_test_actions'] ?? array();
 
         if (!is_array($actions)) {
             return array();
@@ -87,7 +87,7 @@ if (!function_exists('as_get_scheduled_actions')) {
 if (!function_exists('as_schedule_single_action')) {
     function as_schedule_single_action($timestamp, $hook, $args = array(), $group = '', $unique = false)
     {
-        $return = $GLOBALS['km_admin_schedule_return'] ?? ($GLOBALS['km_test_schedule_return'] ?? 1);
+        $return = $GLOBALS['wsz_admin_schedule_return'] ?? ($GLOBALS['wsz_test_schedule_return'] ?? 1);
 
         if (!(is_numeric($return) ? ((int) $return > 0) : (true === $return))) {
             return $return;
@@ -101,11 +101,11 @@ if (!function_exists('as_schedule_single_action')) {
             'unique' => (bool) $unique,
         );
 
-        $GLOBALS['km_admin_test_scheduled'][] = $scheduled_action;
+        $GLOBALS['wsz_admin_test_scheduled'][] = $scheduled_action;
 
         // Shared fallback for other tests if this stub is loaded first.
-        if (isset($GLOBALS['km_test_scheduled_actions']) && is_array($GLOBALS['km_test_scheduled_actions'])) {
-            $GLOBALS['km_test_scheduled_actions'][] = $scheduled_action;
+        if (isset($GLOBALS['wsz_test_scheduled_actions']) && is_array($GLOBALS['wsz_test_scheduled_actions'])) {
+            $GLOBALS['wsz_test_scheduled_actions'][] = $scheduled_action;
         }
 
         return $return;
@@ -115,7 +115,7 @@ if (!function_exists('as_schedule_single_action')) {
 if (!function_exists('as_unschedule_action')) {
     function as_unschedule_action($hook, $args = array(), $group = '')
     {
-        $GLOBALS['km_admin_test_unscheduled_actions'][] = array(
+        $GLOBALS['wsz_admin_test_unscheduled_actions'][] = array(
             'hook' => (string) $hook,
             'args' => $args,
             'group' => (string) $group,
@@ -136,15 +136,15 @@ if (!function_exists('get_option')) {
             return $GLOBALS['wsz_subs_test_card_transactions'];
         }
 
-        if (!isset($GLOBALS['km_admin_test_options']) || !is_array($GLOBALS['km_admin_test_options'])) {
+        if (!isset($GLOBALS['wsz_admin_test_options']) || !is_array($GLOBALS['wsz_admin_test_options'])) {
             return $default;
         }
 
-        if (!array_key_exists($option_name, $GLOBALS['km_admin_test_options'])) {
+        if (!array_key_exists($option_name, $GLOBALS['wsz_admin_test_options'])) {
             return $default;
         }
 
-        return $GLOBALS['km_admin_test_options'][$option_name];
+        return $GLOBALS['wsz_admin_test_options'][$option_name];
     }
 }
 
@@ -155,11 +155,11 @@ if (!function_exists('update_option')) {
             $GLOBALS['wsz_subs_test_card_transactions'] = is_array($value) ? $value : array();
         }
 
-        if (!isset($GLOBALS['km_admin_test_options']) || !is_array($GLOBALS['km_admin_test_options'])) {
-            $GLOBALS['km_admin_test_options'] = array();
+        if (!isset($GLOBALS['wsz_admin_test_options']) || !is_array($GLOBALS['wsz_admin_test_options'])) {
+            $GLOBALS['wsz_admin_test_options'] = array();
         }
 
-        $GLOBALS['km_admin_test_options'][$option_name] = $value;
+        $GLOBALS['wsz_admin_test_options'][$option_name] = $value;
 
         return true;
     }
@@ -175,26 +175,26 @@ final class AdminSubscriptionsTest extends TestCase
     {
         parent::setUp();
 
-        $GLOBALS['km_admin_test_actions'] = array();
-        $GLOBALS['km_admin_test_meta_boxes'] = array();
-        $GLOBALS['km_admin_test_removed_meta_boxes'] = array();
+        $GLOBALS['wsz_admin_test_actions'] = array();
+        $GLOBALS['wsz_admin_test_meta_boxes'] = array();
+        $GLOBALS['wsz_admin_test_removed_meta_boxes'] = array();
         $GLOBALS['wsz_subs_test_card_transactions'] = array();
-        $GLOBALS['km_admin_test_scheduled'] = array();
-        $GLOBALS['km_admin_test_unscheduled_actions'] = array();
-        $GLOBALS['km_admin_test_options'] = array();
-        $GLOBALS['km_admin_schedule_return'] = 1;
+        $GLOBALS['wsz_admin_test_scheduled'] = array();
+        $GLOBALS['wsz_admin_test_unscheduled_actions'] = array();
+        $GLOBALS['wsz_admin_test_options'] = array();
+        $GLOBALS['wsz_admin_schedule_return'] = 1;
     }
 
     protected function tearDown(): void
     {
-        unset($GLOBALS['km_admin_test_actions']);
-        unset($GLOBALS['km_admin_test_meta_boxes']);
-        unset($GLOBALS['km_admin_test_removed_meta_boxes']);
+        unset($GLOBALS['wsz_admin_test_actions']);
+        unset($GLOBALS['wsz_admin_test_meta_boxes']);
+        unset($GLOBALS['wsz_admin_test_removed_meta_boxes']);
         unset($GLOBALS['wsz_subs_test_card_transactions']);
-        unset($GLOBALS['km_admin_test_scheduled']);
-        unset($GLOBALS['km_admin_test_unscheduled_actions']);
-        unset($GLOBALS['km_admin_test_options']);
-        unset($GLOBALS['km_admin_schedule_return']);
+        unset($GLOBALS['wsz_admin_test_scheduled']);
+        unset($GLOBALS['wsz_admin_test_unscheduled_actions']);
+        unset($GLOBALS['wsz_admin_test_options']);
+        unset($GLOBALS['wsz_admin_schedule_return']);
 
         parent::tearDown();
     }
@@ -204,7 +204,7 @@ final class AdminSubscriptionsTest extends TestCase
         $manager = $this->createMock(WSZ_Subscription_Manager::class);
         $admin = new WSZ_Admin_Subscriptions($manager);
 
-        $GLOBALS['km_admin_test_actions'] = array(
+        $GLOBALS['wsz_admin_test_actions'] = array(
             array(
                 'action_id' => 33,
                 'scheduled_date_local' => '2026-04-27 10:02:00',
@@ -255,7 +255,7 @@ final class AdminSubscriptionsTest extends TestCase
             static function (array $box): string {
                 return (string) ($box['screen'] ?? '');
             },
-            $GLOBALS['km_admin_test_meta_boxes']
+            $GLOBALS['wsz_admin_test_meta_boxes']
         )));
 
         $this->assertContains('shop_subscription', $screens);
@@ -265,7 +265,7 @@ final class AdminSubscriptionsTest extends TestCase
             static function (array $box): string {
                 return (string) ($box['id'] ?? '');
             },
-            $GLOBALS['km_admin_test_meta_boxes']
+            $GLOBALS['wsz_admin_test_meta_boxes']
         )));
 
         $this->assertContains('wsz_subs_meta_keys', $meta_box_ids);
@@ -274,7 +274,7 @@ final class AdminSubscriptionsTest extends TestCase
             static function (array $box): string {
                 return (string) ($box['id'] ?? '');
             },
-            $GLOBALS['km_admin_test_removed_meta_boxes']
+            $GLOBALS['wsz_admin_test_removed_meta_boxes']
         )));
 
         $this->assertContains('woocommerce-order-data', $removed_meta_box_ids);
@@ -435,14 +435,14 @@ final class AdminSubscriptionsTest extends TestCase
         $output = (string) ob_get_clean();
 
         $this->assertStringContainsString('Recovery: queued an immediate renewal action', $output);
-        $this->assertCount(1, $GLOBALS['km_admin_test_scheduled']);
-        $this->assertSame('wsz_subs_process_renewal', $GLOBALS['km_admin_test_scheduled'][0]['hook']);
-        $this->assertSame('wsz-subscriptions', $GLOBALS['km_admin_test_scheduled'][0]['group']);
+        $this->assertCount(1, $GLOBALS['wsz_admin_test_scheduled']);
+        $this->assertSame('wsz_subs_process_renewal', $GLOBALS['wsz_admin_test_scheduled'][0]['hook']);
+        $this->assertSame('wsz-subscriptions', $GLOBALS['wsz_admin_test_scheduled'][0]['group']);
     }
 
     public function test_render_upcoming_renewals_meta_box_does_not_report_recovery_when_scheduler_returns_zero(): void
     {
-        $GLOBALS['km_admin_schedule_return'] = 0;
+        $GLOBALS['wsz_admin_schedule_return'] = 0;
 
         $subscription = $this->createMock(WC_Order::class);
         $subscription->method('get_id')->willReturn(44);
@@ -469,7 +469,7 @@ final class AdminSubscriptionsTest extends TestCase
         $output = (string) ob_get_clean();
 
         $this->assertStringNotContainsString('Recovery: queued an immediate renewal action', $output);
-        $this->assertCount(0, $GLOBALS['km_admin_test_scheduled']);
+        $this->assertCount(0, $GLOBALS['wsz_admin_test_scheduled']);
         $this->assertStringContainsString('Renewal is due/overdue by', $output);
     }
 
@@ -509,7 +509,7 @@ final class AdminSubscriptionsTest extends TestCase
         $admin->render_upcoming_renewals_meta_box($post);
         $output = (string) ob_get_clean();
 
-        $this->assertCount(0, $GLOBALS['km_admin_test_scheduled']);
+        $this->assertCount(0, $GLOBALS['wsz_admin_test_scheduled']);
         $this->assertStringNotContainsString('Recovery: queued an immediate renewal action', $output);
     }
 
@@ -549,7 +549,7 @@ final class AdminSubscriptionsTest extends TestCase
 
         $admin = new WSZ_Admin_Subscriptions($manager);
 
-        $GLOBALS['km_admin_test_actions'] = array(
+        $GLOBALS['wsz_admin_test_actions'] = array(
             array(
                 'action_id' => 501,
                 'args' => array(
@@ -566,13 +566,13 @@ final class AdminSubscriptionsTest extends TestCase
         $this->assertSame(1, (int) ($report['eligible_actions'] ?? 0));
         $this->assertSame(1, (int) ($report['unscheduled_actions'] ?? 0));
         $this->assertSame(1, (int) ($report['expired_subscriptions'] ?? 0));
-        $this->assertCount(1, $GLOBALS['km_admin_test_unscheduled_actions']);
-        $this->assertGreaterThan(0, (int) ($GLOBALS['km_admin_test_options']['wsz_subs_finite_term_cleanup_completed_at'] ?? 0));
+        $this->assertCount(1, $GLOBALS['wsz_admin_test_unscheduled_actions']);
+        $this->assertGreaterThan(0, (int) ($GLOBALS['wsz_admin_test_options']['wsz_subs_finite_term_cleanup_completed_at'] ?? 0));
     }
 
     public function test_run_finite_term_cleanup_is_one_time_without_force(): void
     {
-        $GLOBALS['km_admin_test_options']['wsz_subs_finite_term_cleanup_completed_at'] = 1700000000;
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_finite_term_cleanup_completed_at'] = 1700000000;
 
         $manager = $this->createMock(WSZ_Subscription_Manager::class);
         $manager
@@ -586,6 +586,6 @@ final class AdminSubscriptionsTest extends TestCase
         $this->assertTrue((bool) ($report['already_completed'] ?? false));
         $this->assertSame(1700000000, (int) ($report['completed_at'] ?? 0));
         $this->assertSame(0, (int) ($report['scanned_actions'] ?? -1));
-        $this->assertCount(0, $GLOBALS['km_admin_test_unscheduled_actions']);
+        $this->assertCount(0, $GLOBALS['wsz_admin_test_unscheduled_actions']);
     }
 }

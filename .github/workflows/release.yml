@@ -1,0 +1,132 @@
+name: Build and Release Package
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version=""
+          source=""
+
+          head_tag="$(git tag --points-at HEAD | grep -E '^[vV]?[0-9]+' | head -n 1 || true)"
+
+          if [[ -n "$head_tag" ]]; then
+            version="${head_tag#[vV]}"
+            source="tag:${head_tag}"
+          fi
+
+          if [[ -z "$version" && -f style.css ]]; then
+            version="$(sed -nE 's/^Version:[[:space:]]*(.+)$/\1/p' style.css | head -n 1)"
+            source="style.css"
+          fi
+
+          if [[ -z "$version" && -f package.json ]]; then
+            version="$(node -p "require('./package.json').version" 2>/dev/null || true)"
+            source="package.json"
+          fi
+
+          if [[ -z "$version" && -f wsz-woo-subscriptions.php ]]; then
+            version="$(sed -nE 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*(.+)$/\1/p' wsz-woo-subscriptions.php | head -n 1)"
+            source="wsz-woo-subscriptions.php"
+          fi
+
+          version="$(echo "$version" | tr -d '\r' | xargs)"
+
+          if [[ -z "$version" ]]; then
+            echo "Unable to determine release version from tag, style.css, package.json, or plugin header."
+            exit 1
+          fi
+
+          tag="v${version}"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved version: $version"
+          echo "Version source: $source"
+
+      - name: Install production dependencies
+        if: ${{ hashFiles('composer.json') != '' }}
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
+
+      - name: Build ZIP package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          slug="${GITHUB_REPOSITORY##*/}"
+          version="${{ steps.version.outputs.version }}"
+          workdir="$RUNNER_TEMP/package"
+          staged_dir="$workdir/$slug"
+          zip_name="${slug}-${version}.zip"
+          zip_path="$workdir/$zip_name"
+
+          rm -rf "$workdir"
+          mkdir -p "$staged_dir"
+
+          rsync -a ./ "$staged_dir/" \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.phpunit.cache/' \
+            --exclude 'tests/' \
+            --exclude 'docs/' \
+            --exclude 'phpunit.xml.dist' \
+            --exclude '.gitignore' \
+            --exclude '.DS_Store' \
+            --exclude '*.zip'
+
+          (
+            cd "$workdir"
+            zip -rq "$zip_name" "$slug"
+          )
+
+          echo "zip_name=$zip_name" >> "$GITHUB_OUTPUT"
+          echo "zip_path=$zip_path" >> "$GITHUB_OUTPUT"
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.zip_name }}
+          path: ${{ steps.package.outputs.zip_path }}
+
+      - name: Create GitHub release and attach ZIP
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.version.outputs.tag }}
+          name: Woo Subs-Zero v${{ steps.version.outputs.version }}
+          artifacts: ${{ steps.package.outputs.zip_path }}
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true

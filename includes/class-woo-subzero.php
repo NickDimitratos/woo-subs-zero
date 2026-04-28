@@ -179,6 +179,6 @@ final class WSZ_Woo_Subzero
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/admin/class-wsz-admin-subscriptions.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/class-wsz-payment-handler.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/Gateway/class-wsz-test-card-gateway.php';
-        require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/Gateway/class-wsz-paynl-gateway.php';
+        require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/Gateway/class-wsz-tokenized-gateway.php';
     }
 }

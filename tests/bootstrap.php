@@ -62,7 +62,7 @@ if (!function_exists('current_time')) {
 if (!function_exists('WC')) {
     function WC()
     {
-        return $GLOBALS['km_wc_test_container'] ?? null;
+        return $GLOBALS['wsz_wc_test_container'] ?? null;
     }
 }
 

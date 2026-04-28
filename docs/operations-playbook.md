@@ -55,7 +55,7 @@ Webhook idempotency:
 
 Webhook authenticity:
 
-- In public environments, configure `wsz_subs_verify_paynl_exchange` for signature/API verification.
+- In public environments, configure `wsz_subs_verify_gateway_exchange` for signature/API verification.
 - If custom verification is not configured, callbacks must include a valid WooCommerce `order_key`.
 
 ## Operational SLOs

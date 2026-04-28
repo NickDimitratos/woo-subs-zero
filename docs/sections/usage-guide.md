@@ -27,13 +27,13 @@ Expected result: the subscription expires at term boundary with no extra renewal
 
 For secure public deployment, callbacks should not rely on untrusted paid-state fields alone.
 
-- Recommended: implement `wsz_subs_verify_paynl_exchange` for signature/API verification.
+- Recommended: implement `wsz_subs_verify_gateway_exchange` for signature/API verification.
 - Built-in fallback: if custom verification is absent, payload must include a valid WooCommerce `order_key`.
 
 Example filter skeleton:
 
 ```php
-add_filter('wsz_subs_verify_paynl_exchange', function ($verified, array $payload, WC_Order $order) {
+add_filter('wsz_subs_verify_gateway_exchange', function ($verified, array $payload, WC_Order $order) {
     // Return true only after validating gateway signature/HMAC or API verification.
     // Return false for invalid payloads; return null to use built-in fallback behavior.
     return $verified;

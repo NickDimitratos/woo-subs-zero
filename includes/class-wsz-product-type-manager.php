@@ -251,7 +251,7 @@ class WSZ_Product_Type_Manager
 
     public function render_subscription_fields(): void
     {
-        echo '<div class="options_group km-subscription-fields show_if_' . esc_attr(self::SIMPLE_TYPE) . ' show_if_' . esc_attr(self::VARIABLE_TYPE) . '">';
+        echo '<div class="options_group wsz-subscription-fields show_if_' . esc_attr(self::SIMPLE_TYPE) . ' show_if_' . esc_attr(self::VARIABLE_TYPE) . '">';
 
         woocommerce_wp_text_input(
             array(
@@ -402,27 +402,27 @@ class WSZ_Product_Type_Manager
         ?>
         <script>
         jQuery(function($) {
-            const kmSimpleType = '<?php echo esc_js(self::SIMPLE_TYPE); ?>';
-            const kmVariableType = '<?php echo esc_js(self::VARIABLE_TYPE); ?>';
-            const kmTypes = [kmSimpleType, kmVariableType];
+            const wszSimpleType = '<?php echo esc_js(self::SIMPLE_TYPE); ?>';
+            const wszVariableType = '<?php echo esc_js(self::VARIABLE_TYPE); ?>';
+            const wszTypes = [wszSimpleType, wszVariableType];
 
-            function addVisibilityAliasClasses(coreType, kmType) {
-                $('.show_if_' + coreType).addClass('show_if_' + kmType);
-                $('.hide_if_' + coreType).addClass('hide_if_' + kmType);
+            function addVisibilityAliasClasses(coreType, wszType) {
+                $('.show_if_' + coreType).addClass('show_if_' + wszType);
+                $('.hide_if_' + coreType).addClass('hide_if_' + wszType);
             }
 
             // Reuse Woo core field visibility rules so WSZ types inherit price and data-field behavior.
-            addVisibilityAliasClasses('simple', kmSimpleType);
-            addVisibilityAliasClasses('variable', kmVariableType);
+            addVisibilityAliasClasses('simple', wszSimpleType);
+            addVisibilityAliasClasses('variable', wszVariableType);
 
-            function toggleKmSubscriptionFields() {
+            function toggleWszSubscriptionFields() {
                 const currentType = $('#product-type').val();
-                const isKmType = kmTypes.includes(currentType);
+                const isWszType = wszTypes.includes(currentType);
 
-                $('.km-subscription-fields').toggle(isKmType);
+                $('.wsz-subscription-fields').toggle(isWszType);
             }
 
-            $('#product-type').on('change', toggleKmSubscriptionFields);
+            $('#product-type').on('change', toggleWszSubscriptionFields);
             // Trigger Woo's existing product-type handlers after aliasing classes.
             $('#product-type').trigger('change');
         });

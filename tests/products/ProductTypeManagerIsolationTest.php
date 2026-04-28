@@ -40,14 +40,14 @@ if (!function_exists('get_current_screen')) {
 if (!function_exists('woocommerce_simple_add_to_cart')) {
     function woocommerce_simple_add_to_cart()
     {
-        $GLOBALS['km_test_simple_add_to_cart_calls'] = (int) ($GLOBALS['km_test_simple_add_to_cart_calls'] ?? 0) + 1;
+        $GLOBALS['wsz_test_simple_add_to_cart_calls'] = (int) ($GLOBALS['wsz_test_simple_add_to_cart_calls'] ?? 0) + 1;
     }
 }
 
 if (!function_exists('woocommerce_variable_add_to_cart')) {
     function woocommerce_variable_add_to_cart()
     {
-        $GLOBALS['km_test_variable_add_to_cart_calls'] = (int) ($GLOBALS['km_test_variable_add_to_cart_calls'] ?? 0) + 1;
+        $GLOBALS['wsz_test_variable_add_to_cart_calls'] = (int) ($GLOBALS['wsz_test_variable_add_to_cart_calls'] ?? 0) + 1;
     }
 }
 
@@ -63,7 +63,7 @@ if (!function_exists('wc_get_product')) {
     {
         $product_id = (int) $product_id;
 
-        return $GLOBALS['km_test_wc_products'][$product_id] ?? null;
+        return $GLOBALS['wsz_test_wc_products'][$product_id] ?? null;
     }
 }
 
@@ -75,14 +75,14 @@ final class ProductTypeManagerIsolationTest extends TestCase
     {
         parent::setUp();
 
-        $GLOBALS['km_test_wc_products'] = array();
-        $GLOBALS['km_checkout_test_products'] = &$GLOBALS['km_test_wc_products'];
+        $GLOBALS['wsz_test_wc_products'] = array();
+        $GLOBALS['wsz_checkout_test_products'] = &$GLOBALS['wsz_test_wc_products'];
     }
 
     protected function tearDown(): void
     {
-        unset($GLOBALS['km_test_wc_products']);
-        unset($GLOBALS['km_checkout_test_products']);
+        unset($GLOBALS['wsz_test_wc_products']);
+        unset($GLOBALS['wsz_checkout_test_products']);
 
         parent::tearDown();
     }
@@ -146,11 +146,11 @@ final class ProductTypeManagerIsolationTest extends TestCase
         $manager->render_admin_visibility_script();
         $output = (string) ob_get_clean();
 
-        $this->assertStringContainsString("$('.show_if_' + coreType).addClass('show_if_' + kmType);", $output);
-        $this->assertStringContainsString("$('.hide_if_' + coreType).addClass('hide_if_' + kmType);", $output);
-        $this->assertStringContainsString("addVisibilityAliasClasses('simple', kmSimpleType);", $output);
-        $this->assertStringContainsString("$('.km-subscription-fields').toggle(isKmType);", $output);
-        $this->assertStringNotContainsString("$('.show_if_wsz_subscription, .show_if_wsz_variable_subscription').toggle(isKmType);", $output);
+        $this->assertStringContainsString("$('.show_if_' + coreType).addClass('show_if_' + wszType);", $output);
+        $this->assertStringContainsString("$('.hide_if_' + coreType).addClass('hide_if_' + wszType);", $output);
+        $this->assertStringContainsString("addVisibilityAliasClasses('simple', wszSimpleType);", $output);
+        $this->assertStringContainsString("$('.wsz-subscription-fields').toggle(isWszType);", $output);
+        $this->assertStringNotContainsString("$('.show_if_wsz_subscription, .show_if_wsz_variable_subscription').toggle(isWszType);", $output);
     }
 
     public function test_save_subscription_fields_ignores_non_wsz_product_types(): void
@@ -204,11 +204,11 @@ final class ProductTypeManagerIsolationTest extends TestCase
     {
         $manager = new WSZ_Product_Type_Manager();
 
-        $km_simple = new ProductTypeManagerDummyProduct(WSZ_Product_Type_Manager::SIMPLE_TYPE);
-        $km_variable = new ProductTypeManagerDummyProduct(WSZ_Product_Type_Manager::VARIABLE_TYPE);
+        $wsz_simple = new ProductTypeManagerDummyProduct(WSZ_Product_Type_Manager::SIMPLE_TYPE);
+        $wsz_variable = new ProductTypeManagerDummyProduct(WSZ_Product_Type_Manager::VARIABLE_TYPE);
 
-        $this->assertTrue($manager->filter_product_is_virtual(false, $km_simple));
-        $this->assertTrue($manager->filter_product_is_virtual(false, $km_variable));
+        $this->assertTrue($manager->filter_product_is_virtual(false, $wsz_simple));
+        $this->assertTrue($manager->filter_product_is_virtual(false, $wsz_variable));
     }
 
     public function test_filter_product_is_virtual_preserves_non_wsz_types(): void
@@ -223,22 +223,22 @@ final class ProductTypeManagerIsolationTest extends TestCase
 
     public function test_render_wsz_simple_add_to_cart_uses_woocommerce_renderer(): void
     {
-        $GLOBALS['km_test_simple_add_to_cart_calls'] = 0;
+        $GLOBALS['wsz_test_simple_add_to_cart_calls'] = 0;
 
         $manager = new WSZ_Product_Type_Manager();
         $manager->render_wsz_simple_add_to_cart();
 
-        $this->assertSame(1, (int) $GLOBALS['km_test_simple_add_to_cart_calls']);
+        $this->assertSame(1, (int) $GLOBALS['wsz_test_simple_add_to_cart_calls']);
     }
 
     public function test_render_wsz_variable_add_to_cart_uses_woocommerce_renderer(): void
     {
-        $GLOBALS['km_test_variable_add_to_cart_calls'] = 0;
+        $GLOBALS['wsz_test_variable_add_to_cart_calls'] = 0;
 
         $manager = new WSZ_Product_Type_Manager();
         $manager->render_wsz_variable_add_to_cart();
 
-        $this->assertSame(1, (int) $GLOBALS['km_test_variable_add_to_cart_calls']);
+        $this->assertSame(1, (int) $GLOBALS['wsz_test_variable_add_to_cart_calls']);
     }
 
     public function test_apply_plan_total_installments_splits_fixed_term_price_without_double_division(): void
@@ -257,7 +257,7 @@ final class ProductTypeManagerIsolationTest extends TestCase
 
         $variation = new ProductTypeManagerDummyProduct('variation', 902, 100.00, array(), 901);
 
-        $GLOBALS['km_test_wc_products'][901] = $parent;
+        $GLOBALS['wsz_test_wc_products'][901] = $parent;
 
         $cart = new ProductTypeManagerDummyCart(
             array(

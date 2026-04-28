@@ -13,10 +13,10 @@ class WSZ_Webhook_Handler
 
     public function init(): void
     {
-        add_action('woocommerce_api_wsz_paynl_webhook', array($this, 'handle_paynl_exchange'));
+        add_action('woocommerce_api_wsz_gateway_webhook', array($this, 'handle_gateway_exchange'));
     }
 
-    public function handle_paynl_exchange(): void
+    public function handle_gateway_exchange(): void
     {
         $payload = $this->read_exchange_payload();
         $order_id = $this->extract_order_id($payload);
@@ -36,7 +36,7 @@ class WSZ_Webhook_Handler
             $this->respond_true('duplicate');
         }
 
-        $verified_paid = apply_filters('wsz_subs_verify_paynl_exchange', null, $payload, $order);
+        $verified_paid = apply_filters('wsz_subs_verify_gateway_exchange', null, $payload, $order);
 
         if (!is_bool($verified_paid)) {
             if (!$this->is_order_key_valid($order, $payload)) {
@@ -59,7 +59,7 @@ class WSZ_Webhook_Handler
             $this->respond_true('paid');
         }
 
-        $order->update_status('failed', __('Pay.nl exchange verification indicated unpaid state.', 'woo-subzero'));
+        $order->update_status('failed', __('Gateway exchange verification indicated unpaid state.', 'woo-subzero'));
         $this->hold_order_subscriptions($order);
         $this->respond_true('not_paid');
     }
