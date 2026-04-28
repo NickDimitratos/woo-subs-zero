@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.4] - 2026-04-28
+
+### Changed
+
+- Updated README positioning with a top hero image and explicit free-subscriptions messaging.
+- Added package export exclusions for the README hero image via `.distignore` and `.gitattributes` `export-ignore`.
+
 ## [0.1.3] - 2026-04-28
 
 ### Fixed

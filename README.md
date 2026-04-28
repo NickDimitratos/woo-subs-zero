@@ -1,4 +1,6 @@
-# Woo Subs-Zero
+# Woo Subs-Zero - Free Subscriptions for WooCommerce
+
+![Woo Subs-Zero](docs/assets/readme-hero.png)
 
 > [!IMPORTANT]
 > **Open Source Beta**
@@ -25,6 +27,7 @@
 
 ## Why Woo Subs-Zero
 
+- It's free.
 - Works without requiring the WooCommerce Subscriptions extension.
 - Uses deterministic scheduling and idempotency safeguards for renewal correctness.
 - Keeps gateway credentials in WooCommerce Payments settings (no duplicate gateway credential screens).
