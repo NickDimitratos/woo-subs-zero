@@ -1,0 +1,53 @@
+# Usage Guide
+
+## Create Subscription-Capable Products
+
+You can use:
+
+- WSZ Subscription product type
+- WSZ Variable Subscription product type
+- Supported product/order-item subscription meta fields
+
+Fixed-term example (4 monthly payments):
+
+- Billing Interval: `1`
+- Billing Period: `month`
+- Subscription Length: `4`
+
+Expected result: the subscription expires at term boundary with no extra renewal cycle.
+
+## Renewal and Retry Behavior
+
+- Renewals are queued by Action Scheduler per subscription profile.
+- Renewal payment success marks the renewal paid and schedules the next cycle.
+- Renewal failure transitions to failure handling and retry logic.
+- Retry notifications can be enabled for customer and/or store owner.
+
+## Webhook Authenticity Contract
+
+For secure public deployment, callbacks should not rely on untrusted paid-state fields alone.
+
+- Recommended: implement `wsz_subs_verify_paynl_exchange` for signature/API verification.
+- Built-in fallback: if custom verification is absent, payload must include a valid WooCommerce `order_key`.
+
+Example filter skeleton:
+
+```php
+add_filter('wsz_subs_verify_paynl_exchange', function ($verified, array $payload, WC_Order $order) {
+    // Return true only after validating gateway signature/HMAC or API verification.
+    // Return false for invalid payloads; return null to use built-in fallback behavior.
+    return $verified;
+}, 10, 3);
+```
+
+## Built-in QA Tools
+
+WSZ Test Card gateway:
+
+- Enables realistic QA payments without external credentials.
+- Auto-approves checkout and scheduled renewal test payments.
+
+Accelerated testing mode:
+
+- Converts billing intervals to minute-based cycles for fast validation.
+- Useful for verifying finite-term completion and retry/queue behavior quickly.

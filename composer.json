@@ -1,0 +1,24 @@
+{
+    "name": "nikosdimitratos/woo-subzero",
+    "description": "Deterministic, gateway-agnostic WooCommerce subscriptions plugin.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": "^8.1"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5",
+        "php-stubs/wordpress-stubs": "^6.8",
+        "php-stubs/woocommerce-stubs": "^9.9"
+    },
+    "autoload": {
+        "classmap": [
+            "includes/",
+            "src/"
+        ]
+    },
+    "scripts": {
+        "test": "phpunit -c phpunit.xml.dist",
+        "lint": "find . -name '*.php' -print0 | xargs -0 -n1 php -l"
+    }
+}
