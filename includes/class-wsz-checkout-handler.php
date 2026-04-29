@@ -98,6 +98,15 @@ class WSZ_Checkout_Handler
 
         $existing_ids = $this->normalize_existing_subscription_ids($order);
         if (!empty($existing_ids)) {
+            if (in_array($order->get_status(), array('processing', 'completed'), true)) {
+                $this->subscription_manager->maybe_activate_subscriptions_from_parent_order(
+                    (int) $order->get_id(),
+                    '',
+                    (string) $order->get_status(),
+                    $order
+                );
+            }
+
             return;
         }
 
@@ -105,7 +114,23 @@ class WSZ_Checkout_Handler
             return;
         }
 
-        $billing = $this->resolve_billing_profile($order);
+        $requested_start_date = $this->resolve_requested_start_date($order);
+        $has_requested_start_date = '' !== $requested_start_date;
+
+        $start_timestamp = $has_requested_start_date
+            ? $this->date_string_to_timestamp($requested_start_date)
+            : 0;
+
+        if ($start_timestamp <= 0) {
+            if ($order->get_date_created() instanceof WC_DateTime) {
+                $start_timestamp = max(1, (int) $order->get_date_created()->getTimestamp());
+            } else {
+                $start_timestamp = current_time('timestamp', true);
+            }
+        }
+
+        $billing = $this->resolve_billing_profile($order, $start_timestamp);
+        $has_deferred_start = $has_requested_start_date && $start_timestamp > current_time('timestamp', true);
 
         $subscription = $this->subscription_manager->create_subscription_from_order(
             $order,
@@ -114,9 +139,7 @@ class WSZ_Checkout_Handler
                 'billing_interval' => $billing['interval'],
                 'billing_period' => $billing['period'],
                 'subscription_length' => $billing['length'],
-                'start_timestamp' => $order->get_date_created()
-                    ? $order->get_date_created()->getTimestamp()
-                    : current_time('timestamp', true),
+                'start_timestamp' => $start_timestamp,
             )
         );
 
@@ -127,18 +150,37 @@ class WSZ_Checkout_Handler
         if (!empty($billing['sync_day'])) {
             $subscription->update_meta_data('_wsz_sync_day', (int) $billing['sync_day']);
             $subscription->update_meta_data('_wsz_synchronized', 'yes');
-            $subscription->save();
         }
+
+        if ($has_requested_start_date) {
+            $subscription->update_meta_data('_wsz_requested_start_date', (string) $requested_start_date);
+        }
+
+        if ($has_deferred_start) {
+            $subscription->update_meta_data('_wsz_deferred_activation_at', gmdate('Y-m-d H:i:s', $start_timestamp));
+        }
+
+        $subscription->save();
 
         $subscription->add_order_note(
             sprintf(__('Subscription created from checkout order %d.', 'woo-subzero'), $order->get_id())
         );
 
-        if (in_array($order->get_status(), array('processing', 'completed'), true)) {
+        if ($has_deferred_start) {
+            $activation_timestamp = $this->subscription_manager->get_deferred_activation_schedule_timestamp($start_timestamp);
+
+            $subscription->add_order_note(
+                sprintf(
+                    __('Subscription deferred until %s UTC.', 'woo-subzero'),
+                    gmdate('Y-m-d H:i:s', $activation_timestamp)
+                )
+            );
+
+            $this->subscription_manager->schedule_deferred_activation((int) $subscription->get_id(), $start_timestamp);
+        } elseif (in_array($order->get_status(), array('processing', 'completed'), true)) {
             try {
-                $this->subscription_manager->transition_status(
+                $this->subscription_manager->activate_subscription_after_payment(
                     $subscription,
-                    'active',
                     __('Initial payment already captured during checkout.', 'woo-subzero')
                 );
             } catch (Throwable $throwable) {
@@ -148,7 +190,7 @@ class WSZ_Checkout_Handler
                 );
             }
 
-            do_action('wsz_subs_subscription_activated', $subscription);
+            // Activation hook is dispatched by the manager activation helper.
         }
     }
 
@@ -274,7 +316,7 @@ class WSZ_Checkout_Handler
         return false;
     }
 
-    private function resolve_billing_profile(WC_Order $order): array
+    private function resolve_billing_profile(WC_Order $order, int $start_timestamp = 0): array
     {
         $interval = 1;
         $period = 'month';
@@ -377,12 +419,10 @@ class WSZ_Checkout_Handler
                     }
                 }
 
-                $length_meta = (int) $billing_product->get_meta('_wsz_subscription_length', true);
-                if ($length_meta <= 0) {
-                    $length_meta = (int) $billing_product->get_meta('_subscription_length', true);
-                }
+                // Length must prioritize the concrete purchased line item/variation over parent defaults.
+                $length_meta = $item_length > 0 ? $item_length : 0;
 
-                if ($length_meta <= 0 && $product instanceof WC_Product && $product !== $billing_product) {
+                if ($length_meta <= 0 && $product instanceof WC_Product) {
                     $length_meta = (int) $product->get_meta('_wsz_subscription_length', true);
 
                     if ($length_meta <= 0) {
@@ -390,8 +430,11 @@ class WSZ_Checkout_Handler
                     }
                 }
 
-                if ($length_meta <= 0 && $item_length > 0) {
-                    $length_meta = $item_length;
+                if ($length_meta <= 0) {
+                    $length_meta = (int) $billing_product->get_meta('_wsz_subscription_length', true);
+                    if ($length_meta <= 0) {
+                        $length_meta = (int) $billing_product->get_meta('_subscription_length', true);
+                    }
                 }
 
                 if ($length_meta > 0) {
@@ -406,8 +449,10 @@ class WSZ_Checkout_Handler
             $period = 'month';
         }
 
+        $start_timestamp = $start_timestamp > 0 ? $start_timestamp : current_time('timestamp', true);
+
         $next_payment = $this->subscription_manager->calculate_next_payment_for_profile(
-            current_time('timestamp', true),
+            $start_timestamp,
             max(1, $interval),
             $period
         );
@@ -431,10 +476,50 @@ class WSZ_Checkout_Handler
             'period' => $period,
             'sync_day' => $sync_day,
             'length' => max(0, $length),
+            'requested_start_date' => $start_timestamp > 0 ? gmdate('Y-m-d', $start_timestamp) : '',
             'next_payment' => $next_payment > 0
                 ? $next_payment
-                : $this->subscription_manager->calculate_next_payment_for_profile(current_time('timestamp', true), 1, 'month'),
+                : $this->subscription_manager->calculate_next_payment_for_profile($start_timestamp, 1, 'month'),
         );
+    }
+
+    private function resolve_requested_start_date(WC_Order $order): string
+    {
+        foreach ($order->get_items('line_item') as $item) {
+            if (!($item instanceof WC_Order_Item_Product) || !is_callable(array($item, 'get_meta'))) {
+                continue;
+            }
+
+            $requested_start_date = (string) $item->get_meta('_wsz_requested_start_date', true);
+
+            if ('' === $requested_start_date) {
+                continue;
+            }
+
+            if ($this->date_string_to_timestamp($requested_start_date) > 0) {
+                return $requested_start_date;
+            }
+        }
+
+        return '';
+    }
+
+    private function date_string_to_timestamp(string $date_value): int
+    {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_value)) {
+            return 0;
+        }
+
+        $timezone = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('UTC');
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', $date_value, $timezone);
+
+        if (!($date instanceof DateTimeImmutable) || $date->format('Y-m-d') !== $date_value) {
+            return 0;
+        }
+
+        $timestamp = $date->setTime(0, 0, 0)->getTimestamp();
+
+        return $timestamp > 0 ? $timestamp : 0;
     }
 
     /**

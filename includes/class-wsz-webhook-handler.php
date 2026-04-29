@@ -83,9 +83,8 @@ class WSZ_Webhook_Handler
             }
 
             try {
-                $this->subscription_manager->transition_status(
+                $this->subscription_manager->activate_subscription_after_payment(
                     $subscription,
-                    'active',
                     __('Activated by verified exchange webhook.', 'woo-subzero')
                 );
             } catch (Throwable $throwable) {
@@ -96,7 +95,7 @@ class WSZ_Webhook_Handler
                 continue;
             }
 
-            do_action('wsz_subs_subscription_activated', $subscription);
+            // Activation hook is dispatched by the manager activation helper.
         }
     }
 

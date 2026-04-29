@@ -704,6 +704,8 @@ class WSZ_Admin_Subscriptions
         $preferred_keys = array(
             '_wsz_parent_order_id',
             '_wsz_start_date',
+            '_wsz_requested_start_date',
+            '_wsz_deferred_activation_at',
             '_wsz_next_payment',
             '_wsz_end_date',
             '_wsz_billing_interval',

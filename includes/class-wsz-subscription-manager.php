@@ -12,7 +12,7 @@ class WSZ_Subscription_Manager
 
     private const VALID_TRANSITIONS = array(
         'pending' => array('active', 'cancelled'),
-        'active' => array('on-hold', 'pending-cancel', 'expired'),
+        'active' => array('on-hold', 'pending-cancel', 'expired', 'cancelled'),
         'on-hold' => array('active', 'cancelled'),
         'pending-cancel' => array('cancelled'),
         'cancelled' => array(),
@@ -26,6 +26,10 @@ class WSZ_Subscription_Manager
         add_filter('wc_order_statuses', array($this, 'inject_custom_statuses'));
 
         add_action('woocommerce_order_status_changed', array($this, 'maybe_activate_subscriptions_from_parent_order'), 20, 4);
+        add_action('woocommerce_order_status_cancelled', array($this, 'maybe_cancel_subscription_from_renewal_order'), 20, 2);
+        add_action('woocommerce_order_status_refunded', array($this, 'maybe_cancel_subscription_from_renewal_order'), 20, 2);
+        add_action('woocommerce_subscription_status_updated', array($this, 'sync_parent_order_status_context'), 20, 3);
+        add_action('wsz_subs_activate_deferred_subscription', array($this, 'activate_deferred_subscription'), 10, 1);
         add_action('wsz_subs_finalize_pending_cancel', array($this, 'finalize_pending_cancel'), 10, 1);
         add_action('wsz_subs_expire_subscription', array($this, 'process_expiration'), 10, 1);
     }
@@ -222,6 +226,18 @@ class WSZ_Subscription_Manager
 
         if ($subscription_length > 0) {
             $subscription->update_meta_data('_wsz_subscription_length', $subscription_length);
+            $subscription->update_meta_data('_wsz_total_payments', $subscription_length);
+
+            $initial_payment_completed = false;
+
+            if (is_callable(array($order, 'is_paid'))) {
+                $initial_payment_completed = (bool) $order->is_paid();
+            } else {
+                $initial_payment_completed = in_array($order->get_status(), array('processing', 'completed'), true);
+            }
+
+            $subscription->update_meta_data('_wsz_completed_payments', $initial_payment_completed ? 1 : 0);
+            $subscription->update_meta_data('_wsz_initial_payment_counted', $initial_payment_completed ? 'yes' : 'no');
         }
 
         $subscription->set_status('pending');
@@ -323,7 +339,9 @@ class WSZ_Subscription_Manager
             return;
         }
 
-        if (!in_array($to_status, array('processing', 'completed'), true)) {
+        $to_status = sanitize_key((string) $to_status);
+
+        if (!in_array($to_status, array('processing', 'completed', 'cancelled', 'refunded'), true)) {
             return;
         }
 
@@ -339,13 +357,125 @@ class WSZ_Subscription_Manager
                 continue;
             }
 
+            if (in_array($to_status, array('cancelled', 'refunded'), true)) {
+                $current_status = self::normalize_status((string) $subscription->get_status());
+
+                if (!in_array($current_status, array('cancelled', 'expired'), true)) {
+                    $this->transition_status(
+                        $subscription,
+                        'cancelled',
+                        __('Parent order was cancelled or refunded.', 'woo-subzero')
+                    );
+                }
+
+                continue;
+            }
+
             if ('pending' !== self::normalize_status($subscription->get_status())) {
                 continue;
             }
 
-            $this->transition_status($subscription, 'active', __('Initial payment completed.', 'woo-subzero'));
+            $deferred_start_timestamp = $this->get_deferred_start_timestamp($subscription);
 
-            do_action('wsz_subs_subscription_activated', $subscription);
+            if ($deferred_start_timestamp > current_time('timestamp', true)) {
+                continue;
+            }
+
+            $this->activate_subscription_after_payment(
+                $subscription,
+                __('Initial payment completed.', 'woo-subzero')
+            );
+        }
+    }
+
+    /**
+     * Activate a pending subscription after confirmed payment across all entry points.
+     *
+     * @param mixed $subscription
+     */
+    public function activate_subscription_after_payment($subscription, string $note = ''): bool
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return false;
+        }
+
+        if ('pending' !== self::normalize_status((string) $subscription->get_status())) {
+            return false;
+        }
+
+        $this->mark_initial_payment_completed($subscription);
+        $this->maybe_rebase_lifecycle_from_activation($subscription, current_time('timestamp', true));
+
+        $this->transition_status(
+            $subscription,
+            'active',
+            '' !== $note ? $note : __('Initial payment completed.', 'woo-subzero')
+        );
+
+        do_action('wsz_subs_subscription_activated', $subscription);
+
+        return true;
+    }
+
+    /**
+     * Keep renewal-order cancellation in sync with linked subscriptions.
+     *
+     * @param WC_Order|int $order_or_id
+     * @param mixed        $order
+     */
+    public function maybe_cancel_subscription_from_renewal_order($order_or_id, $order = null): void
+    {
+        if ($order instanceof WC_Order) {
+            $renewal_order = $order;
+        } elseif ($order_or_id instanceof WC_Order) {
+            $renewal_order = $order_or_id;
+        } elseif (function_exists('wc_get_order')) {
+            $renewal_order = wc_get_order((int) $order_or_id);
+        } else {
+            $renewal_order = null;
+        }
+
+        if (!($renewal_order instanceof WC_Order)) {
+            return;
+        }
+
+        $subscription_id = (int) $renewal_order->get_meta('_wsz_subscription_id', true);
+
+        if ($subscription_id <= 0 && is_callable(array($renewal_order, 'get_parent_id'))) {
+            $parent_id = (int) $renewal_order->get_parent_id();
+
+            if ($parent_id > 0 && $this->get_subscription($parent_id) instanceof WC_Order) {
+                $subscription_id = $parent_id;
+            }
+        }
+
+        if ($subscription_id <= 0) {
+            return;
+        }
+
+        $subscription = $this->get_subscription($subscription_id);
+
+        if (!($subscription instanceof WC_Order)) {
+            return;
+        }
+
+        $status = self::normalize_status((string) $subscription->get_status());
+
+        if (in_array($status, array('cancelled', 'expired'), true)) {
+            return;
+        }
+
+        try {
+            $this->transition_status(
+                $subscription,
+                'cancelled',
+                __('Renewal order was cancelled or refunded.', 'woo-subzero')
+            );
+        } catch (Throwable $throwable) {
+            wc_get_logger()->warning(
+                $throwable->getMessage(),
+                array('source' => 'woo-subzero')
+            );
         }
     }
 
@@ -402,7 +532,26 @@ class WSZ_Subscription_Manager
         do_action("woocommerce_subscription_status_{$target_status}", $subscription);
         do_action("woocommerce_subscription_status_{$old_status}_to_{$target_status}", $subscription);
 
+        if ('active' === $target_status) {
+            $subscription->update_meta_data('_wsz_deferred_activation_at', '');
+            $subscription->save();
+
+            if (function_exists('as_unschedule_all_actions')) {
+                as_unschedule_all_actions(
+                    'wsz_subs_activate_deferred_subscription',
+                    array('subscription_id' => $subscription->get_id()),
+                    self::ACTION_GROUP
+                );
+            }
+        }
+
         if (in_array($target_status, array('cancelled', 'expired'), true) && function_exists('as_unschedule_all_actions')) {
+            as_unschedule_all_actions(
+                'wsz_subs_activate_deferred_subscription',
+                array('subscription_id' => $subscription->get_id()),
+                self::ACTION_GROUP
+            );
+
             as_unschedule_all_actions(
                 'wsz_subs_expire_subscription',
                 array('subscription_id' => $subscription->get_id()),
@@ -411,6 +560,111 @@ class WSZ_Subscription_Manager
         }
 
         return true;
+    }
+
+    public function schedule_deferred_activation(int $subscription_id, int $start_timestamp): void
+    {
+        if ($subscription_id <= 0 || $start_timestamp <= 0) {
+            return;
+        }
+
+        $activation_timestamp = $this->get_deferred_activation_schedule_timestamp($start_timestamp);
+
+        if (function_exists('as_unschedule_all_actions')) {
+            as_unschedule_all_actions(
+                'wsz_subs_activate_deferred_subscription',
+                array('subscription_id' => $subscription_id),
+                self::ACTION_GROUP
+            );
+        }
+
+        $subscription = $this->get_subscription($subscription_id);
+
+        if ($subscription instanceof WC_Order) {
+            $subscription->update_meta_data('_wsz_deferred_activation_at', gmdate('Y-m-d H:i:s', $activation_timestamp));
+            $subscription->save();
+        }
+
+        if ($activation_timestamp <= current_time('timestamp', true)) {
+            $this->activate_deferred_subscription($subscription_id);
+            return;
+        }
+
+        if (!function_exists('as_schedule_single_action')) {
+            return;
+        }
+
+        as_schedule_single_action(
+            $activation_timestamp,
+            'wsz_subs_activate_deferred_subscription',
+            array('subscription_id' => $subscription_id),
+            self::ACTION_GROUP,
+            false
+        );
+    }
+
+    public function activate_deferred_subscription(int $subscription_id): void
+    {
+        $subscription = $this->get_subscription($subscription_id);
+
+        if (!($subscription instanceof WC_Order)) {
+            return;
+        }
+
+        if ('pending' !== self::normalize_status((string) $subscription->get_status())) {
+            return;
+        }
+
+        $deferred_start_timestamp = $this->get_deferred_start_timestamp($subscription);
+
+        if ($deferred_start_timestamp > current_time('timestamp', true)) {
+            $this->schedule_deferred_activation($subscription_id, $deferred_start_timestamp);
+            return;
+        }
+
+        $parent_order = $this->resolve_parent_order_for_subscription($subscription);
+
+        if ($parent_order instanceof WC_Order && !$this->is_parent_order_paid_for_subscription_activation($parent_order)) {
+            $retry_after_seconds = $this->get_test_cycle_minutes() > 0
+                ? $this->get_test_cycle_minutes() * 60
+                : HOUR_IN_SECONDS;
+
+            $this->schedule_deferred_activation($subscription_id, current_time('timestamp', true) + max(60, $retry_after_seconds));
+            return;
+        }
+
+        $activated_at_timestamp = current_time('timestamp', true);
+
+        // In accelerated QA mode, align lifecycle dates to actual activation time so renewals begin immediately.
+        if ($this->get_test_deferred_start_minutes() > 0) {
+            $billing_interval = $this->get_billing_interval($subscription);
+            $billing_period = $this->get_billing_period($subscription);
+            $next_payment_timestamp = $this->calculate_next_payment_for_profile(
+                $activated_at_timestamp,
+                $billing_interval,
+                $billing_period
+            );
+
+            $subscription->update_meta_data('_wsz_start_date', gmdate('Y-m-d H:i:s', $activated_at_timestamp));
+            $subscription->save();
+
+            if ($next_payment_timestamp > 0) {
+                $this->update_next_payment_timestamp($subscription, $next_payment_timestamp);
+            }
+        }
+
+        $this->activate_subscription_after_payment(
+            $subscription,
+            __('Subscription activated on scheduled start date.', 'woo-subzero')
+        );
+
+        if ($this->get_test_cycle_minutes() > 0) {
+            $next_payment_timestamp = $this->get_next_payment_timestamp($subscription);
+
+            if ($next_payment_timestamp > 0) {
+                $this->ensure_test_mode_first_renewal_is_queued($subscription, $next_payment_timestamp);
+            }
+        }
     }
 
     public function cancel_with_prepaid_term($subscription, bool $immediate = false): bool
@@ -469,6 +723,19 @@ class WSZ_Subscription_Manager
             return 0;
         }
 
+        $stored_next_payment = (string) $subscription->get_meta('_wsz_next_payment', true);
+        $stored_next_payment_timestamp = 0;
+
+        if ('' !== $stored_next_payment) {
+            $stored_next_payment_timestamp = (int) strtotime($stored_next_payment . ' UTC');
+            $stored_next_payment_timestamp = $stored_next_payment_timestamp > 0 ? $stored_next_payment_timestamp : 0;
+        }
+
+        // In accelerated deferred-start QA mode, trust WSZ-managed schedule source first.
+        if ($this->get_test_deferred_start_minutes() > 0 && $stored_next_payment_timestamp > 0) {
+            return $stored_next_payment_timestamp;
+        }
+
         if (is_callable(array($subscription, 'get_time'))) {
             $timestamp = (int) $subscription->get_time('next_payment');
             if ($timestamp > 0) {
@@ -483,14 +750,11 @@ class WSZ_Subscription_Manager
             }
         }
 
-        $next_payment = (string) $subscription->get_meta('_wsz_next_payment', true);
-        if ('' === $next_payment) {
+        if ('' === $stored_next_payment) {
             return 0;
         }
 
-        $timestamp = strtotime($next_payment . ' UTC');
-
-        return $timestamp > 0 ? $timestamp : 0;
+        return $stored_next_payment_timestamp;
     }
 
     public function update_next_payment_timestamp($subscription, int $next_payment_timestamp): void
@@ -513,6 +777,7 @@ class WSZ_Subscription_Manager
         }
 
         $subscription->update_meta_data('_wsz_next_payment', $gm_date);
+        $subscription->update_meta_data('_schedule_next_payment', $gm_date);
         $subscription->save();
     }
 
@@ -607,6 +872,119 @@ class WSZ_Subscription_Manager
         }
 
         return max(0, $length);
+    }
+
+    public function get_total_payments($subscription): int
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return 0;
+        }
+
+        $total = (int) $subscription->get_meta('_wsz_total_payments', true);
+
+        if ($total <= 0) {
+            $total = $this->get_subscription_length($subscription);
+        }
+
+        return max(0, $total);
+    }
+
+    public function get_completed_payments($subscription): int
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return 0;
+        }
+
+        $completed = max(0, (int) $subscription->get_meta('_wsz_completed_payments', true));
+
+        if ($completed > 0) {
+            return $completed;
+        }
+
+        if ($this->get_total_payments($subscription) <= 0) {
+            return 0;
+        }
+
+        $initial_counted = (string) $subscription->get_meta('_wsz_initial_payment_counted', true);
+
+        if ('yes' === $initial_counted) {
+            return 1;
+        }
+
+        $status = self::normalize_status((string) $subscription->get_status());
+
+        if (in_array($status, array('active', 'on-hold', 'pending-cancel', 'expired', 'cancelled'), true)) {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    public function mark_initial_payment_completed($subscription): int
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return 0;
+        }
+
+        $total = $this->get_total_payments($subscription);
+
+        if ($total <= 0) {
+            return 0;
+        }
+
+        $completed = $this->get_completed_payments($subscription);
+
+        if ($completed >= 1) {
+            return $completed;
+        }
+
+        $subscription->update_meta_data('_wsz_completed_payments', 1);
+        $subscription->update_meta_data('_wsz_initial_payment_counted', 'yes');
+        $subscription->save();
+
+        return 1;
+    }
+
+    public function increment_completed_payments($subscription, int $step = 1): int
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return 0;
+        }
+
+        $total = $this->get_total_payments($subscription);
+
+        if ($total <= 0) {
+            return $this->get_completed_payments($subscription);
+        }
+
+        $completed = $this->get_completed_payments($subscription);
+        $completed += max(1, $step);
+        $completed = min($total, $completed);
+
+        $subscription->update_meta_data('_wsz_completed_payments', $completed);
+
+        if ($completed >= 1) {
+            $subscription->update_meta_data('_wsz_initial_payment_counted', 'yes');
+        }
+
+        $subscription->save();
+
+        return $completed;
+    }
+
+    public function has_completed_all_payments($subscription): bool
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return false;
+        }
+
+        $total = $this->get_total_payments($subscription);
+
+        if ($total <= 0) {
+            return false;
+        }
+
+        return $this->get_completed_payments($subscription) >= $total;
     }
 
     public static function calculate_end_timestamp(
@@ -737,7 +1115,7 @@ class WSZ_Subscription_Manager
             'wsz_subs_expire_subscription',
             array('subscription_id' => $subscription_id),
             self::ACTION_GROUP,
-            true
+            false
         );
     }
 
@@ -761,6 +1139,11 @@ class WSZ_Subscription_Manager
             return;
         }
 
+        if ($this->get_total_payments($subscription) > 0 && !$this->has_completed_all_payments($subscription)) {
+            // Finite plans should only expire when all required payments are completed.
+            return;
+        }
+
         try {
             if ('active' === $status) {
                 $this->transition_status($subscription, 'expired', __('Subscription term completed.', 'woo-subzero'));
@@ -773,7 +1156,8 @@ class WSZ_Subscription_Manager
             }
 
             if (in_array($status, array('pending', 'on-hold'), true)) {
-                $this->transition_status($subscription, 'cancelled', __('Subscription ended while not active.', 'woo-subzero'));
+                // Keep non-activated subscriptions pending/on-hold. They will be rebased at activation.
+                return;
             }
         } catch (Throwable $throwable) {
             wc_get_logger()->warning(
@@ -781,6 +1165,51 @@ class WSZ_Subscription_Manager
                 array('source' => 'woo-subzero')
             );
         }
+    }
+
+    /**
+     * Keep parent order and subscription status context synchronized for observability/debugging.
+     *
+     * @param mixed $subscription
+     */
+    public function sync_parent_order_status_context($subscription, string $new_status, string $old_status): void
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return;
+        }
+
+        $parent_order_id = (int) $subscription->get_meta('_wsz_parent_order_id', true);
+
+        if ($parent_order_id <= 0 && is_callable(array($subscription, 'get_parent_id'))) {
+            $parent_order_id = (int) $subscription->get_parent_id();
+        }
+
+        if ($parent_order_id <= 0) {
+            return;
+        }
+
+        $parent_order = wc_get_order($parent_order_id);
+
+        if (!($parent_order instanceof WC_Order)) {
+            return;
+        }
+
+        $normalized_new = self::normalize_status($new_status);
+        $normalized_old = self::normalize_status($old_status);
+        $changed_at = gmdate('Y-m-d H:i:s', current_time('timestamp', true));
+
+        $parent_order->update_meta_data('_wsz_subscription_status', $normalized_new);
+        $parent_order->update_meta_data('_wsz_subscription_status_changed_at', $changed_at);
+        $parent_order->save();
+
+        $parent_order->add_order_note(
+            sprintf(
+                __('Subscription #%1$d status changed: %2$s -> %3$s.', 'woo-subzero'),
+                (int) $subscription->get_id(),
+                $normalized_old,
+                $normalized_new
+            )
+        );
     }
 
     public function get_billing_interval($subscription): int
@@ -943,6 +1372,88 @@ class WSZ_Subscription_Manager
         return $timestamp > 0 ? $timestamp : 0;
     }
 
+    public function get_deferred_start_timestamp($subscription): int
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return 0;
+        }
+
+        $deferred_start = (string) $subscription->get_meta('_wsz_deferred_activation_at', true);
+
+        if ('' === $deferred_start) {
+            return 0;
+        }
+
+        $timestamp = strtotime($deferred_start . ' UTC');
+
+        return $timestamp > 0 ? $timestamp : 0;
+    }
+
+    public function get_test_deferred_start_minutes(): int
+    {
+        $options = $this->get_options();
+
+        if ('yes' !== $options['enable_test_mode']) {
+            return 0;
+        }
+
+        if ('yes' !== $options['enable_test_deferred_start']) {
+            return 0;
+        }
+
+        return max(1, (int) $options['test_deferred_start_minutes']);
+    }
+
+    public function get_deferred_activation_schedule_timestamp(int $requested_start_timestamp, int $reference_timestamp = 0): int
+    {
+        $requested_start_timestamp = max(1, $requested_start_timestamp);
+        $reference_timestamp = $reference_timestamp > 0 ? $reference_timestamp : current_time('timestamp', true);
+
+        if ($requested_start_timestamp <= $reference_timestamp) {
+            return $requested_start_timestamp;
+        }
+
+        $test_deferred_start_minutes = $this->get_test_deferred_start_minutes();
+
+        if ($test_deferred_start_minutes > 0) {
+            return max(1, $reference_timestamp + ($test_deferred_start_minutes * 60));
+        }
+
+        return $requested_start_timestamp;
+    }
+
+    private function resolve_parent_order_for_subscription(WC_Order $subscription): ?WC_Order
+    {
+        $parent_order_id = (int) $subscription->get_meta('_wsz_parent_order_id', true);
+
+        if ($parent_order_id <= 0 && is_callable(array($subscription, 'get_parent_id'))) {
+            $parent_order_id = (int) $subscription->get_parent_id();
+        }
+
+        if ($parent_order_id <= 0 || !function_exists('wc_get_order')) {
+            return null;
+        }
+
+        $parent_order = wc_get_order($parent_order_id);
+
+        return $parent_order instanceof WC_Order ? $parent_order : null;
+    }
+
+    private function is_parent_order_paid_for_subscription_activation(WC_Order $order): bool
+    {
+        $status = sanitize_key((string) $order->get_status());
+
+        if (in_array($status, array('processing', 'completed'), true)) {
+            return true;
+        }
+
+        if (is_callable(array($order, 'is_paid'))) {
+            return (bool) $order->is_paid();
+        }
+
+        return false;
+    }
+
     private function copy_order_context(WC_Order $order, WC_Order $subscription): void
     {
         foreach ($order->get_items(array('line_item', 'fee', 'shipping', 'tax', 'coupon')) as $item) {
@@ -986,10 +1497,100 @@ class WSZ_Subscription_Manager
         $defaults = array(
             'enable_test_mode' => 'no',
             'test_cycle_minutes' => 1,
+            'enable_test_deferred_start' => 'yes',
+            'test_deferred_start_minutes' => 1,
             'enable_test_cycle_notifications' => 'no',
         );
 
         return wp_parse_args((array) get_option('wsz_subs_options', array()), $defaults);
+    }
+
+    /**
+     * Rebase start/next/end lifecycle markers at first activation when no explicit start date was selected.
+     */
+    private function maybe_rebase_lifecycle_from_activation(WC_Order $subscription, int $activated_at_timestamp): void
+    {
+        $requested_start_date = trim((string) $subscription->get_meta('_wsz_requested_start_date', true));
+
+        if ('' !== $requested_start_date) {
+            return;
+        }
+
+        $activated_at_timestamp = max(1, $activated_at_timestamp);
+        $subscription->update_meta_data('_wsz_start_date', gmdate('Y-m-d H:i:s', $activated_at_timestamp));
+        $subscription->save();
+
+        $next_payment_timestamp = $this->calculate_next_payment_from_timestamp($subscription, $activated_at_timestamp);
+
+        if ($next_payment_timestamp > 0) {
+            $this->update_next_payment_timestamp($subscription, $next_payment_timestamp);
+        }
+
+        $subscription_length = $this->get_subscription_length($subscription);
+
+        if ($subscription_length <= 0) {
+            return;
+        }
+
+        $end_timestamp = $this->calculate_end_timestamp_for_profile(
+            $activated_at_timestamp,
+            $this->get_billing_interval($subscription),
+            $this->get_billing_period($subscription),
+            $subscription_length
+        );
+
+        if ($end_timestamp <= 0) {
+            return;
+        }
+
+        $this->update_end_timestamp($subscription, $end_timestamp);
+        $this->schedule_expiration((int) $subscription->get_id(), $end_timestamp);
+    }
+
+    private function ensure_test_mode_first_renewal_is_queued(WC_Order $subscription, int $next_payment_timestamp): void
+    {
+        if (!function_exists('as_schedule_single_action')) {
+            return;
+        }
+
+        $subscription_id = (int) $subscription->get_id();
+
+        if ($subscription_id <= 0) {
+            return;
+        }
+
+        $now = current_time('timestamp', true);
+
+        if ($next_payment_timestamp <= $now) {
+            $next_payment_timestamp = $now + 1;
+        }
+
+        $schedule_key = hash('sha256', $subscription_id . '|' . $next_payment_timestamp);
+        $args = array(
+            'subscription_id' => $subscription_id,
+            'schedule_key' => $schedule_key,
+        );
+
+        if (function_exists('as_has_scheduled_action') && as_has_scheduled_action('wsz_subs_process_renewal', $args, self::ACTION_GROUP)) {
+            return;
+        }
+
+        $result = as_schedule_single_action(
+            $next_payment_timestamp,
+            'wsz_subs_process_renewal',
+            $args,
+            self::ACTION_GROUP,
+            false
+        );
+
+        $action_id = is_numeric($result) ? (int) $result : (true === $result ? 1 : 0);
+
+        if ($action_id <= 0) {
+            return;
+        }
+
+        $subscription->update_meta_data('_wsz_next_schedule_key', $schedule_key);
+        $subscription->save();
     }
 
     private static function normalize_status(string $status): string

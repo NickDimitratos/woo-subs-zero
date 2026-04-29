@@ -38,6 +38,8 @@ final class WSZ_Woo_Subzero
 
     private ?WSZ_Product_Type_Manager $product_type_manager = null;
 
+    private ?WSZ_Start_Date_Manager $start_date_manager = null;
+
     public static function instance(): WSZ_Woo_Subzero
     {
         if (null === self::$instance) {
@@ -58,6 +60,7 @@ final class WSZ_Woo_Subzero
                     'enable_retry_emails_customer' => 'no',
                     'enable_retry_emails_admin' => 'no',
                     'enable_switching' => 'no',
+                    'enable_start_date' => 'yes',
                     'enable_synchronization' => 'no',
                     'enable_proration' => 'yes',
                     'prorate_recurring' => 'yes',
@@ -72,6 +75,8 @@ final class WSZ_Woo_Subzero
                     'sync_day_of_month' => 1,
                     'enable_test_mode' => 'no',
                     'test_cycle_minutes' => 1,
+                    'enable_test_deferred_start' => 'yes',
+                    'test_deferred_start_minutes' => 1,
                     'enable_test_cycle_notifications' => 'no',
                     'enable_role_transitions' => 'no',
                     'active_user_role' => 'customer',
@@ -114,6 +119,7 @@ final class WSZ_Woo_Subzero
 
         $this->subscription_manager = new WSZ_Subscription_Manager();
         $this->product_type_manager = new WSZ_Product_Type_Manager();
+        $this->start_date_manager = new WSZ_Start_Date_Manager();
         $this->payment_handler = new WSZ_Payment_Handler($this->subscription_manager);
         $this->retry_manager = new WSZ_Retry_Manager($this->subscription_manager, $this->payment_handler);
         $this->switching_manager = new WSZ_Switching_Manager($this->subscription_manager);
@@ -136,6 +142,7 @@ final class WSZ_Woo_Subzero
 
         $this->subscription_manager->init();
         $this->product_type_manager->init();
+        $this->start_date_manager->init();
         $this->payment_handler->init();
         $this->retry_manager->init();
         $this->switching_manager->init();
@@ -171,6 +178,7 @@ final class WSZ_Woo_Subzero
     {
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-subscription-manager.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-product-type-manager.php';
+        require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-start-date-manager.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-renewal-engine.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-retry-manager.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-switching-manager.php';
