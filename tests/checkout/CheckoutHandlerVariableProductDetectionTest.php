@@ -36,6 +36,140 @@ final class CheckoutHandlerVariableProductDetectionTest extends TestCase
         parent::tearDown();
     }
 
+    public static function subscriptionScenarioMatrixProvider(): array
+    {
+        return array(
+            'length_1_without_start_date' => array(1, '', false),
+            'length_4_without_start_date' => array(4, '', false),
+            'length_1_with_start_date' => array(1, '2099-05-01', true),
+            'length_4_with_start_date' => array(4, '2099-05-01', true),
+        );
+    }
+
+    /**
+     * @dataProvider subscriptionScenarioMatrixProvider
+     */
+    public function test_subscription_creation_matrix_for_length_and_start_date(
+        int $subscription_length,
+        string $requested_start_date,
+        bool $expects_deferred_activation
+    ): void
+    {
+        $expected_start_timestamp = '' !== $requested_start_date
+            ? strtotime($requested_start_date . ' 00:00:00 UTC')
+            : 0;
+
+        $next_payment = ($expected_start_timestamp > 0 ? $expected_start_timestamp : current_time('timestamp', true)) + 60;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+
+        if ($expected_start_timestamp > 0) {
+            $subscription_manager
+                ->expects($this->once())
+                ->method('calculate_next_payment_for_profile')
+                ->with($expected_start_timestamp, 1, 'month')
+                ->willReturn($next_payment);
+        } else {
+            $subscription_manager
+                ->expects($this->once())
+                ->method('calculate_next_payment_for_profile')
+                ->with($this->greaterThan(0), 1, 'month')
+                ->willReturn($next_payment);
+        }
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->method('get_id')
+            ->willReturn(300 + $subscription_length);
+        if ($expects_deferred_activation) {
+            $subscription
+                ->expects($this->atLeastOnce())
+                ->method('update_meta_data');
+        } else {
+            $subscription
+                ->expects($this->never())
+                ->method('update_meta_data');
+        }
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('save');
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('add_order_note');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('create_subscription_from_order')
+            ->with(
+                $this->isInstanceOf(CheckoutHandlerDummyOrder::class),
+                $this->callback(
+                    static function (array $args) use ($subscription_length, $expected_start_timestamp): bool {
+                        $start_timestamp = (int) ($args['start_timestamp'] ?? 0);
+
+                        if ($expected_start_timestamp > 0 && $start_timestamp !== $expected_start_timestamp) {
+                            return false;
+                        }
+
+                        if ($expected_start_timestamp <= 0 && $start_timestamp <= 0) {
+                            return false;
+                        }
+
+                        return (int) ($args['subscription_length'] ?? 0) === $subscription_length
+                            && (int) ($args['billing_interval'] ?? 0) === 1
+                            && (string) ($args['billing_period'] ?? '') === 'month'
+                            && (int) ($args['next_payment'] ?? 0) > 0;
+                    }
+                )
+            )
+            ->willReturn($subscription);
+
+        if ($expects_deferred_activation) {
+            $subscription_manager
+                ->expects($this->once())
+                ->method('schedule_deferred_activation')
+                ->with(300 + $subscription_length, $expected_start_timestamp);
+            $subscription_manager
+                ->expects($this->never())
+                ->method('activate_subscription_after_payment');
+        } else {
+            $subscription_manager
+                ->expects($this->never())
+                ->method('schedule_deferred_activation');
+            $subscription_manager
+                ->expects($this->once())
+                ->method('activate_subscription_after_payment')
+                ->with(
+                    $subscription,
+                    $this->stringContains('Initial payment already captured during checkout.')
+                );
+        }
+
+        $handler = new WSZ_Checkout_Handler($subscription_manager);
+
+        $product = new CheckoutHandlerDummyProduct(
+            940 + $subscription_length,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $item_meta = array('_wsz_subscription_length' => (string) $subscription_length);
+
+        if ('' !== $requested_start_date) {
+            $item_meta['_wsz_requested_start_date'] = $requested_start_date;
+        }
+
+        $order = new CheckoutHandlerDummyOrder(
+            array(
+                new CheckoutHandlerDummyOrderItemProduct($product, $item_meta),
+            ),
+            array(),
+            'shop_order',
+            'processing'
+        );
+
+        $handler->maybe_create_subscriptions_from_order($order);
+    }
+
     public function test_contains_subscription_items_detects_variation_using_parent_subscription_type(): void
     {
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -325,6 +459,382 @@ final class CheckoutHandlerVariableProductDetectionTest extends TestCase
         );
 
         $handler->maybe_create_subscriptions_from_order($order);
+    }
+
+    public function test_resolve_requested_start_timestamp_uses_order_item_date_meta(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Checkout_Handler($subscription_manager);
+
+        $product = new CheckoutHandlerDummyProduct(
+            940,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $order = new CheckoutHandlerDummyOrder(
+            array(
+                new CheckoutHandlerDummyOrderItemProduct(
+                    $product,
+                    array('_wsz_requested_start_date' => '2030-05-01')
+                ),
+            )
+        );
+
+        $method = new ReflectionMethod(WSZ_Checkout_Handler::class, 'resolve_requested_start_date');
+        $method->setAccessible(true);
+
+        $resolved = (string) $method->invoke($handler, $order);
+
+        $this->assertSame('2030-05-01', $resolved);
+    }
+
+    public function test_paid_order_with_future_start_date_schedules_deferred_activation(): void
+    {
+        $future_start = strtotime('2099-05-01 00:00:00 UTC');
+        $future_next_payment = strtotime('2099-06-01 00:00:00 UTC');
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('calculate_next_payment_for_profile')
+            ->with($future_start, 1, 'month')
+            ->willReturn($future_next_payment);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->method('get_id')
+            ->willReturn(456);
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('update_meta_data');
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('save');
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('add_order_note');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('create_subscription_from_order')
+            ->with(
+                $this->isInstanceOf(CheckoutHandlerDummyOrder::class),
+                $this->callback(
+                    static function (array $args) use ($future_start, $future_next_payment): bool {
+                        return (int) ($args['start_timestamp'] ?? 0) === $future_start
+                            && (int) ($args['next_payment'] ?? 0) === $future_next_payment
+                            && (int) ($args['billing_interval'] ?? 0) === 1
+                            && (string) ($args['billing_period'] ?? '') === 'month';
+                    }
+                )
+            )
+            ->willReturn($subscription);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('schedule_deferred_activation')
+            ->with(456, $future_start);
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('activate_subscription_after_payment');
+
+        $handler = new WSZ_Checkout_Handler($subscription_manager);
+
+        $product = new CheckoutHandlerDummyProduct(
+            950,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $order = new CheckoutHandlerDummyOrder(
+            array(
+                new CheckoutHandlerDummyOrderItemProduct(
+                    $product,
+                    array('_wsz_requested_start_date' => '2099-05-01')
+                ),
+            ),
+            array(),
+            'shop_order',
+            'processing'
+        );
+
+        $handler->maybe_create_subscriptions_from_order($order);
+    }
+
+    public function test_paid_order_without_selected_start_date_activates_immediately(): void
+    {
+        $now = current_time('timestamp', true);
+        $next_payment = $now + 60;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('calculate_next_payment_for_profile')
+            ->with($this->greaterThan(0), 1, 'month')
+            ->willReturn($next_payment);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->method('get_id')
+            ->willReturn(789);
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('save');
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('add_order_note');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('create_subscription_from_order')
+            ->with(
+                $this->isInstanceOf(CheckoutHandlerDummyOrder::class),
+                $this->callback(
+                    static function (array $args): bool {
+                        return (int) ($args['start_timestamp'] ?? 0) > 0
+                            && (int) ($args['next_payment'] ?? 0) > 0
+                            && (int) ($args['billing_interval'] ?? 0) === 1
+                            && (string) ($args['billing_period'] ?? '') === 'month';
+                    }
+                )
+            )
+            ->willReturn($subscription);
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('schedule_deferred_activation');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('activate_subscription_after_payment')
+            ->with(
+                $subscription,
+                $this->stringContains('Initial payment already captured during checkout.')
+            );
+
+        $handler = new WSZ_Checkout_Handler($subscription_manager);
+
+        $product = new CheckoutHandlerDummyProduct(
+            960,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $order = new CheckoutHandlerDummyOrder(
+            array(
+                new CheckoutHandlerDummyOrderItemProduct($product),
+            ),
+            array(),
+            'shop_order',
+            'processing'
+        );
+
+        $handler->maybe_create_subscriptions_from_order($order);
+    }
+
+    public function test_on_hold_order_without_selected_start_date_activates_immediately(): void
+    {
+        $now = current_time('timestamp', true);
+        $next_payment = $now + 60;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('calculate_next_payment_for_profile')
+            ->with($this->greaterThan(0), 1, 'month')
+            ->willReturn($next_payment);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->method('get_id')
+            ->willReturn(790);
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('save');
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('add_order_note');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('create_subscription_from_order')
+            ->willReturn($subscription);
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('schedule_deferred_activation');
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('activate_subscription_after_payment')
+        ;
+
+        $handler = new WSZ_Checkout_Handler($subscription_manager);
+
+        $product = new CheckoutHandlerDummyProduct(
+            961,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $order = new CheckoutHandlerDummyOrder(
+            array(
+                new CheckoutHandlerDummyOrderItemProduct($product),
+            ),
+            array(),
+            'shop_order',
+            'on-hold'
+        );
+
+        $handler->maybe_create_subscriptions_from_order($order);
+    }
+
+    public function test_pending_order_without_selected_start_date_stays_pending(): void
+    {
+        $now = current_time('timestamp', true);
+        $next_payment = $now + 60;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('calculate_next_payment_for_profile')
+            ->with($this->greaterThan(0), 1, 'month')
+            ->willReturn($next_payment);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->method('get_id')
+            ->willReturn(791);
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('save');
+        $subscription
+            ->expects($this->atLeastOnce())
+            ->method('add_order_note');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('create_subscription_from_order')
+            ->willReturn($subscription);
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('schedule_deferred_activation');
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('activate_subscription_after_payment')
+        ;
+
+        $handler = new WSZ_Checkout_Handler($subscription_manager);
+
+        $product = new CheckoutHandlerDummyProduct(
+            962,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $order = new CheckoutHandlerDummyOrder(
+            array(
+                new CheckoutHandlerDummyOrderItemProduct($product),
+            ),
+            array(),
+            'shop_order',
+            'pending'
+        );
+
+        $handler->maybe_create_subscriptions_from_order($order);
+    }
+
+    public function test_paid_status_recovery_activates_existing_subscription_ids(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('maybe_activate_subscriptions_from_parent_order')
+            ->with(
+                997,
+                '',
+                'processing',
+                $this->isInstanceOf(CheckoutHandlerDummyOrder::class)
+            );
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('create_subscription_from_order');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(555)
+            ->willReturn($this->createMock(WC_Order::class));
+
+        $handler = new WSZ_Checkout_Handler($subscription_manager);
+
+        $product = new CheckoutHandlerDummyProduct(
+            970,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $order = new CheckoutHandlerDummyOrder(
+            array(
+                new CheckoutHandlerDummyOrderItemProduct($product),
+            ),
+            array('_wsz_subscription_ids' => array(555)),
+            'shop_order',
+            'processing',
+            997
+        );
+
+        $handler->maybe_create_subscriptions_for_paid_status($order);
+    }
+
+    public function test_on_hold_status_recovery_does_not_activate_existing_subscription_ids(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('maybe_activate_subscriptions_from_parent_order')
+        ;
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('create_subscription_from_order');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(556)
+            ->willReturn($this->createMock(WC_Order::class));
+
+        $handler = new WSZ_Checkout_Handler($subscription_manager);
+
+        $product = new CheckoutHandlerDummyProduct(
+            971,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $order = new CheckoutHandlerDummyOrder(
+            array(
+                new CheckoutHandlerDummyOrderItemProduct($product),
+            ),
+            array('_wsz_subscription_ids' => array(556)),
+            'shop_order',
+            'on-hold',
+            998
+        );
+
+        $handler->maybe_create_subscriptions_for_paid_status($order);
     }
 }
 

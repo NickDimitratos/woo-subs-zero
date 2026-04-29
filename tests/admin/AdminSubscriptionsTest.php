@@ -89,6 +89,22 @@ if (!function_exists('as_schedule_single_action')) {
     {
         $return = $GLOBALS['wsz_admin_schedule_return'] ?? ($GLOBALS['wsz_test_schedule_return'] ?? 1);
 
+        if (is_array($return)) {
+            if (empty($return)) {
+                $return = 0;
+            } else {
+                $next = array_shift($return);
+
+                if (array_key_exists('wsz_admin_schedule_return', $GLOBALS)) {
+                    $GLOBALS['wsz_admin_schedule_return'] = $return;
+                } else {
+                    $GLOBALS['wsz_test_schedule_return'] = $return;
+                }
+
+                $return = $next;
+            }
+        }
+
         if (!(is_numeric($return) ? ((int) $return > 0) : (true === $return))) {
             return $return;
         }

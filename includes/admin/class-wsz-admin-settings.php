@@ -48,29 +48,43 @@ class WSZ_Admin_Settings
             self::SETTINGS_PAGE
         );
 
-        $fields = array(
-            'enable_manual_renewals' => __('Allow manual renewals', 'woo-subzero'),
+        add_settings_section(
+            'wsz_subs_features',
+            __('Feature Toggles', 'woo-subzero'),
+            array($this, 'render_features_section'),
+            self::SETTINGS_PAGE
+        );
+
+        $feature_fields = array(
+            'enable_manual_renewals' => __('Enable manual renewals', 'woo-subzero'),
             'enable_retries' => __('Enable automatic retry rules', 'woo-subzero'),
-            'enable_retry_emails_customer' => __('Send retry emails to customers', 'woo-subzero'),
-            'enable_retry_emails_admin' => __('Send retry emails to store owner', 'woo-subzero'),
+            'enable_retry_emails_customer' => __('Enable retry emails to customers', 'woo-subzero'),
+            'enable_retry_emails_admin' => __('Enable retry emails to store owner', 'woo-subzero'),
+            'enable_start_date' => __('Enable delayed start date', 'woo-subzero'),
             'enable_switching' => __('Enable switching behavior', 'woo-subzero'),
+            'enable_proration' => __('Enable proration', 'woo-subzero'),
+            'prorate_recurring' => __('Enable recurring amount proration', 'woo-subzero'),
+            'prorate_signup_fee' => __('Enable sign-up fee proration', 'woo-subzero'),
+            'proration_subscription_length' => __('Enable subscription length proration', 'woo-subzero'),
             'enable_synchronization' => __('Enable synchronized renewals', 'woo-subzero'),
             'enable_early_renewal' => __('Enable early renewals', 'woo-subzero'),
             'enable_resubscribe' => __('Enable resubscribe', 'woo-subzero'),
+            'allow_synced_early_renewal' => __('Enable early renewal while synchronized billing is active', 'woo-subzero'),
+            'enable_sync_first_renewal_proration' => __('Enable first synchronized renewal proration', 'woo-subzero'),
             'enable_role_transitions' => __('Enable role transitions', 'woo-subzero'),
         );
 
-        foreach ($fields as $key => $label) {
+        foreach ($feature_fields as $key => $label) {
             add_settings_field(
                 $key,
                 $label,
                 array($this, 'render_checkbox_field'),
-                    self::SETTINGS_PAGE,
-                'wsz_subs_behavior',
-                    array(
-                        'key' => $key,
-                        'description' => $this->get_field_description($key),
-                    )
+                self::SETTINGS_PAGE,
+                'wsz_subs_features',
+                array(
+                    'key' => $key,
+                    'description' => $this->get_field_description($key),
+                )
             );
         }
 
@@ -95,27 +109,6 @@ class WSZ_Admin_Settings
             self::SETTINGS_PAGE
         );
 
-        $switching_fields = array(
-            'enable_proration' => __('Enable proration', 'woo-subzero'),
-            'prorate_recurring' => __('Prorate recurring amount', 'woo-subzero'),
-            'prorate_signup_fee' => __('Prorate sign-up fee', 'woo-subzero'),
-            'proration_subscription_length' => __('Prorate subscription length effects', 'woo-subzero'),
-        );
-
-        foreach ($switching_fields as $key => $label) {
-            add_settings_field(
-                $key,
-                $label,
-                array($this, 'render_checkbox_field'),
-                    self::SETTINGS_PAGE,
-                'wsz_subs_switching',
-                    array(
-                        'key' => $key,
-                        'description' => $this->get_field_description($key),
-                    )
-            );
-        }
-
         add_settings_field(
             'free_switch_window_days',
             __('Free switch window (days)', 'woo-subzero'),
@@ -136,25 +129,6 @@ class WSZ_Admin_Settings
             array($this, 'render_early_renewal_section'),
             self::SETTINGS_PAGE
         );
-
-        $early_fields = array(
-            'allow_synced_early_renewal' => __('Allow early renewal for synchronized subscriptions', 'woo-subzero'),
-            'enable_sync_first_renewal_proration' => __('Prorate first synchronized renewal', 'woo-subzero'),
-        );
-
-        foreach ($early_fields as $key => $label) {
-            add_settings_field(
-                $key,
-                $label,
-                array($this, 'render_checkbox_field'),
-                    self::SETTINGS_PAGE,
-                'wsz_subs_early_renewal',
-                    array(
-                        'key' => $key,
-                        'description' => $this->get_field_description($key),
-                    )
-            );
-        }
 
         add_settings_field(
             'early_renewal_window_days',
@@ -231,6 +205,7 @@ class WSZ_Admin_Settings
 
         $testing_fields = array(
             'enable_test_mode' => __('Enable accelerated test billing', 'woo-subzero'),
+            'enable_test_deferred_start' => __('Accelerate deferred start activation', 'woo-subzero'),
             'enable_test_cycle_notifications' => __('Add test-cycle notifications', 'woo-subzero'),
         );
 
@@ -259,6 +234,20 @@ class WSZ_Admin_Settings
                 'min' => 1,
                 'max' => 1440,
                 'description' => $this->get_field_description('test_cycle_minutes'),
+            )
+        );
+
+        add_settings_field(
+            'test_deferred_start_minutes',
+            __('Minutes for deferred start activation', 'woo-subzero'),
+            array($this, 'render_number_field'),
+            self::SETTINGS_PAGE,
+            'wsz_subs_testing',
+            array(
+                'key' => 'test_deferred_start_minutes',
+                'min' => 1,
+                'max' => 1440,
+                'description' => $this->get_field_description('test_deferred_start_minutes'),
             )
         );
 
@@ -300,6 +289,7 @@ class WSZ_Admin_Settings
             'enable_retries' => $this->sanitize_yes_no($input['enable_retries'] ?? $defaults['enable_retries']),
             'enable_retry_emails_customer' => $this->sanitize_yes_no($input['enable_retry_emails_customer'] ?? $defaults['enable_retry_emails_customer']),
             'enable_retry_emails_admin' => $this->sanitize_yes_no($input['enable_retry_emails_admin'] ?? $defaults['enable_retry_emails_admin']),
+            'enable_start_date' => $this->sanitize_yes_no($input['enable_start_date'] ?? $defaults['enable_start_date']),
             'enable_switching' => $this->sanitize_yes_no($input['enable_switching'] ?? $defaults['enable_switching']),
             'enable_synchronization' => $this->sanitize_yes_no($input['enable_synchronization'] ?? $defaults['enable_synchronization']),
             'enable_proration' => $this->sanitize_yes_no($input['enable_proration'] ?? $defaults['enable_proration']),
@@ -312,12 +302,14 @@ class WSZ_Admin_Settings
             'enable_sync_first_renewal_proration' => $this->sanitize_yes_no($input['enable_sync_first_renewal_proration'] ?? $defaults['enable_sync_first_renewal_proration']),
             'enable_role_transitions' => $this->sanitize_yes_no($input['enable_role_transitions'] ?? $defaults['enable_role_transitions']),
             'enable_test_mode' => $this->sanitize_yes_no($input['enable_test_mode'] ?? $defaults['enable_test_mode']),
+            'enable_test_deferred_start' => $this->sanitize_yes_no($input['enable_test_deferred_start'] ?? $defaults['enable_test_deferred_start']),
             'enable_test_cycle_notifications' => $this->sanitize_yes_no($input['enable_test_cycle_notifications'] ?? $defaults['enable_test_cycle_notifications']),
             'customer_suspension_limit' => min(30, max(0, (int) ($input['customer_suspension_limit'] ?? $defaults['customer_suspension_limit']))),
             'free_switch_window_days' => min(60, max(0, (int) ($input['free_switch_window_days'] ?? $defaults['free_switch_window_days']))),
             'early_renewal_window_days' => min(365, max(0, (int) ($input['early_renewal_window_days'] ?? $defaults['early_renewal_window_days']))),
             'sync_day_of_month' => min(28, max(1, (int) ($input['sync_day_of_month'] ?? $defaults['sync_day_of_month']))),
             'test_cycle_minutes' => min(1440, max(1, (int) ($input['test_cycle_minutes'] ?? $defaults['test_cycle_minutes']))),
+            'test_deferred_start_minutes' => min(1440, max(1, (int) ($input['test_deferred_start_minutes'] ?? $defaults['test_deferred_start_minutes']))),
             'active_user_role' => sanitize_key((string) ($input['active_user_role'] ?? $defaults['active_user_role'])),
             'inactive_user_role' => sanitize_key((string) ($input['inactive_user_role'] ?? $defaults['inactive_user_role'])),
             'queue_batch_size' => min(1000, max(25, (int) ($input['queue_batch_size'] ?? $defaults['queue_batch_size']))),
@@ -353,7 +345,12 @@ class WSZ_Admin_Settings
 
     public function render_behavior_section(): void
     {
-        echo '<p>' . esc_html__('Configure retry behavior, manual renewals, and parity features without duplicating gateway credentials.', 'woo-subzero') . '</p>';
+        echo '<p>' . esc_html__('Configure general subscription behavior and customer limits.', 'woo-subzero') . '</p>';
+    }
+
+    public function render_features_section(): void
+    {
+        echo '<p>' . esc_html__('Enable or disable each subscription feature branch from one place.', 'woo-subzero') . '</p>';
     }
 
     public function render_queue_section(): void
@@ -451,11 +448,13 @@ class WSZ_Admin_Settings
             'enable_retry_emails_customer' => __('Sends customers retry-related notifications after failed renewal payments.', 'woo-subzero'),
             'enable_retry_emails_admin' => __('Sends retry-related notifications to the store owner.', 'woo-subzero'),
             'enable_switching' => __('Allows customers to switch between eligible subscription plans.', 'woo-subzero'),
+            'enable_start_date' => __('Lets customers choose a future subscription start date before checkout.', 'woo-subzero'),
             'enable_synchronization' => __('Aligns renewals to synchronized day-of-month billing dates.', 'woo-subzero'),
             'enable_early_renewal' => __('Lets customers renew before the next scheduled payment date.', 'woo-subzero'),
             'enable_resubscribe' => __('Lets customers start a new subscription from a cancelled or expired one.', 'woo-subzero'),
             'enable_role_transitions' => __('Automatically updates customer roles when subscription status changes.', 'woo-subzero'),
             'enable_test_mode' => __('Runs recurring schedule calculations in minute-based test cycles instead of real day/week/month/year periods.', 'woo-subzero'),
+            'enable_test_deferred_start' => __('When test mode is enabled, future customer-selected start dates are accelerated to a short minute-based delay.', 'woo-subzero'),
             'enable_test_cycle_notifications' => __('Adds a subscription note and fires a hook each accelerated cycle for easier QA verification.', 'woo-subzero'),
             'customer_suspension_limit' => __('Maximum number of customer-initiated suspensions allowed per subscription.', 'woo-subzero'),
             'enable_proration' => __('Turns on proration logic for subscription plan switches.', 'woo-subzero'),
@@ -468,6 +467,7 @@ class WSZ_Admin_Settings
             'early_renewal_window_days' => __('How many days before next payment a customer can renew early.', 'woo-subzero'),
             'sync_day_of_month' => __('Default synchronized billing day of month (1-28).', 'woo-subzero'),
             'test_cycle_minutes' => __('Defines how many minutes one billing interval represents in test mode. Example: 1 means one payment per minute when interval is 1.', 'woo-subzero'),
+            'test_deferred_start_minutes' => __('Defines the delay in minutes before activating deferred-start subscriptions while test mode is enabled.', 'woo-subzero'),
             'active_user_role' => __('Role assigned when a customer has an active subscription.', 'woo-subzero'),
             'inactive_user_role' => __('Role assigned when a customer has no active subscription. Leave empty to keep existing role.', 'woo-subzero'),
             'queue_batch_size' => __('Number of scheduled actions processed per Action Scheduler batch run.', 'woo-subzero'),
@@ -483,6 +483,10 @@ class WSZ_Admin_Settings
             'behavior' => array(
                 'label' => __('Behavior', 'woo-subzero'),
                 'section' => 'wsz_subs_behavior',
+            ),
+            'features' => array(
+                'label' => __('Features', 'woo-subzero'),
+                'section' => 'wsz_subs_features',
             ),
             'switching' => array(
                 'label' => __('Switching & Proration', 'woo-subzero'),
@@ -600,6 +604,7 @@ class WSZ_Admin_Settings
             'enable_retry_emails_customer' => 'no',
             'enable_retry_emails_admin' => 'no',
             'enable_switching' => 'no',
+            'enable_start_date' => 'yes',
             'enable_synchronization' => 'no',
             'enable_proration' => 'yes',
             'prorate_recurring' => 'yes',
@@ -614,6 +619,8 @@ class WSZ_Admin_Settings
             'sync_day_of_month' => 1,
             'enable_test_mode' => 'no',
             'test_cycle_minutes' => 1,
+            'enable_test_deferred_start' => 'yes',
+            'test_deferred_start_minutes' => 1,
             'enable_test_cycle_notifications' => 'no',
             'enable_role_transitions' => 'no',
             'active_user_role' => 'customer',

@@ -16,6 +16,16 @@ Fixed-term example (4 monthly payments):
 
 Expected result: the subscription expires at term boundary with no extra renewal cycle.
 
+## Customer-Selected Start Date
+
+- Subscription products render a required `Start subscription at` date field on single product pages.
+- The selected date is stored on checkout line items and copied to subscription meta.
+- If the start date is in the future:
+  - Checkout still charges immediately.
+  - Subscription remains `pending`.
+  - An activation action is scheduled for the selected start date.
+  - First renewal is calculated one billing cycle after that start date.
+
 ## Renewal and Retry Behavior
 
 - Renewals are queued by Action Scheduler per subscription profile.
@@ -50,4 +60,5 @@ WSZ Test Card gateway:
 Accelerated testing mode:
 
 - Converts billing intervals to minute-based cycles for fast validation.
+- Can also accelerate deferred start activation to minute-based delay (`Testing` settings).
 - Useful for verifying finite-term completion and retry/queue behavior quickly.
