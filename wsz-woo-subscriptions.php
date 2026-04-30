@@ -3,7 +3,7 @@
  * Plugin Name: Woo Subs-Zero
  * Plugin URI: https://ndimitratos.com
  * Description: Deterministic, gateway-agnostic subscription management for WooCommerce.
- * Version: 0.1.4
+ * Version: 0.1.5
  * Requires at least: 6.4
  * Requires PHP: 8.1
  * License: GPL-2.0-or-later

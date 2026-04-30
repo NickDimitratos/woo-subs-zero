@@ -4,7 +4,7 @@ This file lists the current feature set implemented in the plugin.
 
 ## Feature Toggles (WooCommerce > WSZ Subscriptions > Features)
 
-- `enable_manual_renewals`: Allow manual renewal payments when auto-charge is unavailable.
+- 🟠 `enable_manual_renewals`: Allow manual renewal payments when auto-charge is unavailable.
 - 🟢 `enable_retries`: Retry failed automatic renewals through scheduled retry logic.
 - 🟢 `enable_retry_emails_customer`: Send retry/failure notifications to customers.
 - 🟢 `enable_retry_emails_admin`: Send retry/failure notifications to store admin.
