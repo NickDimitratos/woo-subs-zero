@@ -113,6 +113,10 @@ if (!function_exists('wc_get_order')) {
             return $GLOBALS['wsz_test_orders'][$order_id];
         }
 
+        if (isset($GLOBALS['wsz_subs_test_orders'][$order_id])) {
+            return $GLOBALS['wsz_subs_test_orders'][$order_id];
+        }
+
         if (isset($GLOBALS['wsz_test_card_orders'][$order_id])) {
             return $GLOBALS['wsz_test_card_orders'][$order_id];
         }
@@ -1142,6 +1146,115 @@ final class RenewalEngineTest extends TestCase
 
         $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
         $engine->process_renewal(901, '');
+    }
+
+    public function test_create_renewal_order_hydrates_incomplete_wcs_order_in_place(): void
+    {
+        $subscription_item = new class {
+            public function set_id($id): void
+            {
+            }
+        };
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(930);
+        $subscription->method('get_customer_id')->willReturn(14);
+        $subscription->method('get_payment_method')->willReturn('pay_gateway');
+        $subscription->method('get_payment_method_title')->willReturn('Pay.nl');
+        $subscription->method('get_currency')->willReturn('EUR');
+        $subscription->method('get_total')->willReturn(49.99);
+        $subscription->method('get_meta_data')->willReturn(array());
+        $subscription
+            ->method('get_meta')
+            ->with('_wsz_parent_order_id', true)
+            ->willReturn('');
+        $subscription
+            ->method('get_items')
+            ->willReturnCallback(
+                static function ($types) use ($subscription_item): array {
+                    return in_array('line_item', (array) $types, true) ? array($subscription_item) : array();
+                }
+            );
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_payment_method = '';
+        $renewal_currency = '';
+        $renewal_order->method('get_id')->willReturn(444);
+        $renewal_order
+            ->method('get_payment_method')
+            ->willReturnCallback(static function () use (&$renewal_payment_method): string {
+                return $renewal_payment_method;
+            });
+        $renewal_order
+            ->method('get_currency')
+            ->willReturnCallback(static function () use (&$renewal_currency): string {
+                return $renewal_currency;
+            });
+        $renewal_order
+            ->method('get_items')
+            ->with(array('line_item'))
+            ->willReturn(array());
+        $renewal_order
+            ->expects($this->once())
+            ->method('add_item');
+        $renewal_order
+            ->expects($this->once())
+            ->method('set_payment_method')
+            ->with('pay_gateway')
+            ->willReturnCallback(static function ($gateway_id) use (&$renewal_payment_method): void {
+                $renewal_payment_method = (string) $gateway_id;
+            });
+        $renewal_order
+            ->expects($this->once())
+            ->method('set_payment_method_title')
+            ->with('Pay.nl');
+        $renewal_order
+            ->expects($this->once())
+            ->method('set_currency')
+            ->with('EUR')
+            ->willReturnCallback(static function ($currency) use (&$renewal_currency): void {
+                $renewal_currency = (string) $currency;
+            });
+        $renewal_order
+            ->expects($this->once())
+            ->method('set_total')
+            ->with(49.99);
+        $renewal_order
+            ->expects($this->once())
+            ->method('calculate_totals')
+            ->with(false);
+        $renewal_order
+            ->expects($this->once())
+            ->method('update_meta_data')
+            ->with('_wsz_subscription_id', 930);
+        $renewal_order
+            ->expects($this->once())
+            ->method('save');
+
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $renewal_order;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($subscription, $renewal_order)
+            ->willReturn(false);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('add_related_order')
+            ->with($subscription, 444, 'renewal');
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $retry_manager = $this->createMock(WSZ_Retry_Manager::class);
+
+        $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
+
+        $method = new ReflectionMethod(WSZ_Renewal_Engine::class, 'create_renewal_order');
+        $method->setAccessible(true);
+
+        $this->assertSame($renewal_order, $method->invoke($engine, $subscription));
     }
 
 }
