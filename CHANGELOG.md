@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.13] - 2026-05-04
+
+### Fixed
+
+- Preserved saved WooCommerce payment tokens from the paid parent order through subscription activation and renewal order creation so automatic renewals retain reusable card/payment context.
+- Prevented scheduled renewals with a valid saved token from switching to manual pending renewal when gateway registry checks are stale.
+- Exposed `_payment_token_id` through WooCommerce Subscriptions payment metadata for gateway/admin payment-method flows.
+
+### Changed
+
+- Updated the GitHub Actions workflow to validate Composer metadata, lint plugin PHP files, run PHPUnit, and build packages on pushes/PRs while limiting release creation to `v*` tags or manual dispatch.
+
+### Tests
+
+- Added regression coverage for parent-order token object copying, activation-time payment-context recovery, subscription payment metadata, and token-backed scheduled dispatch.
+
 ## [0.1.11] - 2026-05-04
 
 ### Changed
