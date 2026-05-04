@@ -13,6 +13,57 @@ if (!function_exists('get_option')) {
     }
 }
 
+if (!class_exists('WC_Payment_Token')) {
+    class WC_Payment_Token
+    {
+        public function get_id()
+        {
+            return 0;
+        }
+
+        public function get_user_id($context = 'view')
+        {
+            return 0;
+        }
+
+        public function is_default()
+        {
+            return false;
+        }
+    }
+}
+
+if (!class_exists('WC_Payment_Tokens')) {
+    class WC_Payment_Tokens
+    {
+        private static array $tokens = array();
+
+        private static array $customer_tokens = array();
+
+        public static function reset_test_tokens(): void
+        {
+            self::$tokens = array();
+            self::$customer_tokens = array();
+        }
+
+        public static function set_test_tokens(array $tokens, array $customer_tokens): void
+        {
+            self::$tokens = $tokens;
+            self::$customer_tokens = $customer_tokens;
+        }
+
+        public static function get($token_id)
+        {
+            return self::$tokens[(int) $token_id] ?? null;
+        }
+
+        public static function get_customer_tokens($customer_id, $gateway_id = '')
+        {
+            return self::$customer_tokens[(int) $customer_id . '|' . (string) $gateway_id] ?? array();
+        }
+    }
+}
+
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/class-wsz-payment-handler.php';
 
@@ -25,6 +76,10 @@ final class PaymentMethodRecoveryTest extends TestCase
         $GLOBALS['wsz_subs_test_options'] = array(
             'auto_restore_automatic_renewals' => 'yes',
         );
+
+        if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
+            WC_Payment_Tokens::reset_test_tokens();
+        }
 
         $GLOBALS['wsz_wc_test_container'] = new PaymentMethodRecoveryWooContainer(
             new PaymentMethodRecoveryGatewayLoader(
@@ -286,6 +341,209 @@ final class PaymentMethodRecoveryTest extends TestCase
             ->method('set_manual_renewal');
 
         $handler->handle_manual_renewal_payment_complete($subscription, $renewal_order);
+    }
+
+    public function test_get_payment_token_for_subscription_falls_back_to_customer_gateway_tokens(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $token = new PaymentMethodRecoveryToken(778, 44, true);
+
+        WC_Payment_Tokens::set_test_tokens(
+            array(778 => $token),
+            array('44|stripe' => array($token))
+        );
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_payment_token_id')
+            ->with($subscription)
+            ->willReturn(0);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_payment_token_id')
+            ->with($subscription, 778);
+
+        $subscription
+            ->expects($this->exactly(2))
+            ->method('get_customer_id')
+            ->willReturn(44);
+
+        $subscription
+            ->expects($this->once())
+            ->method('get_payment_method')
+            ->willReturn('stripe');
+
+        $this->assertSame($token, $handler->get_payment_token_for_subscription($subscription));
+    }
+
+    public function test_sync_subscriptions_from_paid_parent_order_updates_linked_subscription_payment_context(): void
+    {
+        $GLOBALS['wsz_subs_test_options']['auto_restore_automatic_renewals'] = 'yes';
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+
+        $parent_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $parent_order
+            ->expects($this->exactly(2))
+            ->method('get_meta')
+            ->willReturnCallback(
+                static function ($key, $single = true) {
+                    if ('_wsz_subscription_ids' === $key) {
+                        return array(842);
+                    }
+
+                    if ('_payment_token_id' === $key) {
+                        return '90210';
+                    }
+
+                    return '';
+                }
+            );
+
+        $parent_order
+            ->expects($this->once())
+            ->method('get_payment_method')
+            ->willReturn('stripe');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(842)
+            ->willReturn($subscription);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($parent_order, $subscription)
+            ->willReturn(true);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_payment_token_id')
+            ->with($subscription, 90210);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_manual_renewal')
+            ->with($subscription, false);
+
+        $subscription
+            ->expects($this->once())
+            ->method('set_payment_method')
+            ->with('stripe');
+
+        $subscription
+            ->expects($this->once())
+            ->method('save');
+
+        $handler->sync_subscriptions_from_paid_parent_order($parent_order);
+    }
+
+    public function test_sync_subscriptions_from_paid_parent_order_accepts_order_payment_token_objects(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+
+        $parent_order = $this->createMock(PaymentMethodRecoveryOrderWithTokens::class);
+        $subscription = $this->createMock(WC_Order::class);
+        $token = new PaymentMethodRecoveryToken(778);
+
+        $parent_order
+            ->expects($this->exactly(2))
+            ->method('get_meta')
+            ->willReturnCallback(
+                static function ($key, $single = true) {
+                    if ('_wsz_subscription_ids' === $key) {
+                        return array(843);
+                    }
+
+                    return '';
+                }
+            );
+
+        $parent_order
+            ->expects($this->once())
+            ->method('get_payment_method')
+            ->willReturn('stripe');
+
+        $parent_order
+            ->expects($this->once())
+            ->method('get_payment_tokens')
+            ->willReturn(array($token));
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(843)
+            ->willReturn($subscription);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($parent_order, $subscription)
+            ->willReturn(true);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_payment_token_id')
+            ->with($subscription, 778);
+
+        $subscription
+            ->expects($this->once())
+            ->method('set_payment_method')
+            ->with('stripe');
+
+        $subscription
+            ->expects($this->once())
+            ->method('save');
+
+        $handler->sync_subscriptions_from_paid_parent_order($parent_order);
+    }
+}
+
+final class PaymentMethodRecoveryToken extends WC_Payment_Token
+{
+    private int $id;
+
+    private int $user_id;
+
+    private bool $is_default;
+
+    public function __construct(int $id, int $user_id = 0, bool $is_default = false)
+    {
+        $this->id = $id;
+        $this->user_id = $user_id;
+        $this->is_default = $is_default;
+    }
+
+    public function get_id()
+    {
+        return $this->id;
+    }
+
+    public function get_user_id($context = 'view')
+    {
+        return $this->user_id;
+    }
+
+    public function is_default()
+    {
+        return $this->is_default;
+    }
+}
+
+class PaymentMethodRecoveryOrderWithTokens extends WC_Order
+{
+    public function get_payment_tokens()
+    {
+        return array();
     }
 }
 
