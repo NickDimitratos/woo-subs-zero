@@ -61,7 +61,7 @@ class WSZ_Payment_Handler
             return;
         }
 
-        if ('' === $gateway_id || !$this->is_gateway_available($gateway_id)) {
+        if ('' === $gateway_id || !$this->is_gateway_registered($gateway_id)) {
             $subscription->update_meta_data('_wsz_manual_renewal_fallback_reason', 'gateway_unavailable');
             $subscription->save();
             $this->subscription_manager->set_manual_renewal($subscription, true);

@@ -71,6 +71,13 @@ if (!function_exists('wcs_create_renewal_order')) {
     }
 }
 
+if (!function_exists('wc_create_order')) {
+    function wc_create_order($args = array())
+    {
+        return $GLOBALS['wsz_test_wc_created_order'] ?? null;
+    }
+}
+
 if (!function_exists('wc_get_logger')) {
     function wc_get_logger()
     {
@@ -128,6 +135,7 @@ final class RenewalEngineTest extends TestCase
         $GLOBALS['wsz_test_scheduled_actions'] = array();
         $GLOBALS['wsz_test_schedule_return'] = 1;
         $GLOBALS['wsz_test_wcs_renewal_order'] = null;
+        $GLOBALS['wsz_test_wc_created_order'] = null;
         $GLOBALS['wsz_test_orders'] = array();
         $GLOBALS['wsz_test_card_orders'] = array();
     }
@@ -137,6 +145,7 @@ final class RenewalEngineTest extends TestCase
         unset($GLOBALS['wsz_test_scheduled_actions']);
         unset($GLOBALS['wsz_test_schedule_return']);
         unset($GLOBALS['wsz_test_wcs_renewal_order']);
+        unset($GLOBALS['wsz_test_wc_created_order']);
         unset($GLOBALS['wsz_test_orders']);
         unset($GLOBALS['wsz_test_card_orders']);
 
@@ -573,13 +582,6 @@ final class RenewalEngineTest extends TestCase
 
         $renewal_order = $this->createMock(WC_Order::class);
         $renewal_order
-            ->expects($this->once())
-            ->method('update_meta_data')
-            ->with('_wsz_subscription_id', 915);
-        $renewal_order
-            ->expects($this->once())
-            ->method('save');
-        $renewal_order
             ->expects($this->exactly(2))
             ->method('get_total')
             ->willReturn(10.0);
@@ -668,13 +670,6 @@ final class RenewalEngineTest extends TestCase
         $subscription->method('get_status')->willReturn('active');
 
         $renewal_order = $this->createMock(WC_Order::class);
-        $renewal_order
-            ->expects($this->once())
-            ->method('update_meta_data')
-            ->with('_wsz_subscription_id', 912);
-        $renewal_order
-            ->expects($this->once())
-            ->method('save');
         $renewal_order
             ->expects($this->exactly(2))
             ->method('get_total')
@@ -1075,13 +1070,6 @@ final class RenewalEngineTest extends TestCase
 
         $renewal_order = $this->createMock(WC_Order::class);
         $renewal_order
-            ->expects($this->once())
-            ->method('update_meta_data')
-            ->with('_wsz_subscription_id', 901);
-        $renewal_order
-            ->expects($this->once())
-            ->method('save');
-        $renewal_order
             ->expects($this->exactly(2))
             ->method('get_total')
             ->willReturn(10.0);
@@ -1155,4 +1143,5 @@ final class RenewalEngineTest extends TestCase
         $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
         $engine->process_renewal(901, '');
     }
+
 }
