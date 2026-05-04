@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -116,42 +116,36 @@ jobs:
           echo "zip_path=$zip_path" >> "$GITHUB_OUTPUT"
 
       - name: Upload ZIP artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.zip_name }}
           path: ${{ steps.package.outputs.zip_path }}
 
-      - name: Create GitHub release and attach ZIP (attempt 1)
-        id: create_release_attempt_1
-        continue-on-error: true
-        uses: ncipollo/release-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.version.outputs.tag }}
-          name: Woo Subs-Zero v${{ steps.version.outputs.version }}
-          artifacts: ${{ steps.package.outputs.zip_path }}
-          generateReleaseNotes: true
-          artifactErrorsFailBuild: true
-
-      - name: Pause before release retry
-        if: ${{ steps.create_release_attempt_1.outcome == 'failure' }}
-        run: sleep 10
-
-      - name: Create GitHub release and attach ZIP (attempt 2)
-        id: create_release_attempt_2
-        if: ${{ steps.create_release_attempt_1.outcome == 'failure' }}
-        continue-on-error: true
-        uses: ncipollo/release-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.version.outputs.tag }}
-          name: Woo Subs-Zero v${{ steps.version.outputs.version }}
-          artifacts: ${{ steps.package.outputs.zip_path }}
-          generateReleaseNotes: true
-          artifactErrorsFailBuild: true
-
-      - name: Fail if release could not be created after retry
-        if: ${{ steps.create_release_attempt_1.outcome == 'failure' && steps.create_release_attempt_2.outcome == 'failure' }}
+      - name: Create or update GitHub release and attach ZIP
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_NAME: Woo Subs-Zero v${{ steps.version.outputs.version }}
+          ZIP_PATH: ${{ steps.package.outputs.zip_path }}
+        shell: bash
         run: |
-          echo "Release creation failed on both attempts."
+          set -euo pipefail
+
+          for attempt in 1 2 3 4 5; do
+            echo "Release attempt ${attempt}/5 for ${RELEASE_TAG}"
+
+            if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+              gh release upload "$RELEASE_TAG" "$ZIP_PATH" --clobber && exit 0
+            else
+              gh release create "$RELEASE_TAG" "$ZIP_PATH" \
+                --title "$RELEASE_NAME" \
+                --generate-notes && exit 0
+            fi
+
+            if [[ "$attempt" -lt 5 ]]; then
+              sleep $((attempt * 15))
+            fi
+          done
+
+          echo "Release creation/upload failed after 5 attempts."
           exit 1
