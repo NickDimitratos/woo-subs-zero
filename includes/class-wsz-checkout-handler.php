@@ -13,6 +13,12 @@ class WSZ_Checkout_Handler
 
     public function init(): void
     {
+        add_filter('woocommerce_checkout_registration_required', array($this, 'require_registration_for_subscription_checkout'), 20);
+        add_filter('woocommerce_checkout_registration_enabled', array($this, 'enable_registration_for_subscription_checkout'), 20);
+        add_filter('woocommerce_create_account_default_checked', array($this, 'force_create_account_checked_for_subscription_checkout'), 20);
+        add_filter('woocommerce_checkout_posted_data', array($this, 'force_create_account_in_posted_data'), 20);
+        add_action('woocommerce_after_checkout_validation', array($this, 'validate_subscription_account_checkout'), 20, 2);
+
         add_action('woocommerce_new_order', array($this, 'maybe_create_subscriptions_from_new_order'), 20, 2);
         add_action('woocommerce_checkout_order_processed', array($this, 'maybe_create_subscriptions_from_order'), 20, 3);
         add_action('woocommerce_store_api_checkout_order_processed', array($this, 'maybe_create_subscriptions_from_order'), 20, 2);
@@ -21,6 +27,100 @@ class WSZ_Checkout_Handler
         add_action('woocommerce_order_status_on-hold', array($this, 'maybe_create_subscriptions_for_paid_status'), 20, 2);
         add_action('woocommerce_order_status_processing', array($this, 'maybe_create_subscriptions_for_paid_status'), 20, 2);
         add_action('woocommerce_order_status_completed', array($this, 'maybe_create_subscriptions_for_paid_status'), 20, 2);
+    }
+
+    /**
+     * @param mixed $required
+     */
+    public function require_registration_for_subscription_checkout($required): bool
+    {
+        return $this->cart_contains_subscription_items() ? true : (bool) $required;
+    }
+
+    /**
+     * @param mixed $enabled
+     */
+    public function enable_registration_for_subscription_checkout($enabled): bool
+    {
+        return $this->cart_contains_subscription_items() ? true : (bool) $enabled;
+    }
+
+    /**
+     * @param mixed $checked
+     */
+    public function force_create_account_checked_for_subscription_checkout($checked): bool
+    {
+        return $this->cart_contains_subscription_items() ? true : (bool) $checked;
+    }
+
+    public function force_create_account_in_posted_data(array $posted_data): array
+    {
+        if ($this->cart_contains_subscription_items() && !$this->is_current_user_logged_in()) {
+            $posted_data['createaccount'] = 1;
+        }
+
+        return $posted_data;
+    }
+
+    /**
+     * @param mixed $errors
+     */
+    public function validate_subscription_account_checkout(array $posted_data, $errors): void
+    {
+        if (!$this->cart_contains_subscription_items() || $this->is_current_user_logged_in()) {
+            return;
+        }
+
+        if (!empty($posted_data['createaccount'])) {
+            return;
+        }
+
+        if (is_object($errors) && is_callable(array($errors, 'add'))) {
+            $errors->add(
+                'wsz_subs_account_required',
+                __('An account is required when buying a subscription so automatic renewals can store reusable payment context.', 'woo-subzero')
+            );
+        }
+    }
+
+    /**
+     * @param mixed $cart
+     */
+    public function cart_contains_subscription_items($cart = null): bool
+    {
+        if (null === $cart && function_exists('WC')) {
+            $wc = WC();
+            $cart = is_object($wc) && isset($wc->cart) ? $wc->cart : null;
+        }
+
+        if (!is_object($cart) || !is_callable(array($cart, 'get_cart'))) {
+            return false;
+        }
+
+        $cart_items = $cart->get_cart();
+
+        if (!is_array($cart_items) || empty($cart_items)) {
+            return false;
+        }
+
+        foreach ($cart_items as $cart_item) {
+            if (!is_array($cart_item)) {
+                continue;
+            }
+
+            $product = $cart_item['data'] ?? null;
+
+            if (!($product instanceof WC_Product) && function_exists('wc_get_product')) {
+                $product_id = (int) ($cart_item['variation_id'] ?? $cart_item['product_id'] ?? 0);
+                $product = $product_id > 0 ? wc_get_product($product_id) : null;
+            }
+
+            if ($this->is_subscription_product($product, null, $cart_item)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -287,7 +387,7 @@ class WSZ_Checkout_Handler
     /**
      * @param mixed $product
      */
-    private function is_subscription_product($product, WC_Order_Item_Product $item): bool
+    private function is_subscription_product($product, $item = null, array $cart_item = array()): bool
     {
         if ($product instanceof WC_Product) {
             foreach ($this->get_subscription_detection_products($product) as $candidate_product) {
@@ -305,15 +405,40 @@ class WSZ_Checkout_Handler
             }
         }
 
-        if ('' !== (string) $item->get_meta('_wsz_subscription_period', true)) {
+        if ('' !== $this->get_subscription_context_meta('_wsz_subscription_period', $item, $cart_item)) {
             return true;
         }
 
-        if ((int) $item->get_meta('_wsz_subscription_interval', true) > 0) {
+        if ((int) $this->get_subscription_context_meta('_wsz_subscription_interval', $item, $cart_item) > 0) {
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * @param mixed $item
+     */
+    private function get_subscription_context_meta(string $key, $item = null, array $cart_item = array()): string
+    {
+        if (is_object($item) && is_callable(array($item, 'get_meta'))) {
+            $value = (string) $item->get_meta($key, true);
+
+            if ('' !== $value) {
+                return $value;
+            }
+        }
+
+        if (array_key_exists($key, $cart_item)) {
+            return (string) $cart_item[$key];
+        }
+
+        return '';
+    }
+
+    private function is_current_user_logged_in(): bool
+    {
+        return function_exists('is_user_logged_in') && is_user_logged_in();
     }
 
     private function resolve_billing_profile(WC_Order $order, int $start_timestamp = 0): array

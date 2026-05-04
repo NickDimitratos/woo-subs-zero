@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.11] - 2026-05-04
+
+### Changed
+
+- Require account creation/login during checkout when the cart contains subscription products so automatic renewals can store customer-owned payment context.
+
+### Tests
+
+- Added checkout regression coverage for subscription carts forcing account creation and preserving guest checkout behavior for non-subscription carts.
+
 ## [0.1.10] - 2026-05-04
 
 ### Added
