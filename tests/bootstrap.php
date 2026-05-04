@@ -193,6 +193,10 @@ if (!class_exists('WC_Order')) {
             return 0.0;
         }
 
+        public function set_total($total)
+        {
+        }
+
         public function get_payment_method()
         {
             return '';

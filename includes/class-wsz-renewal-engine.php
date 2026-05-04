@@ -348,14 +348,18 @@ class WSZ_Renewal_Engine
                     return $this->finalize_renewal_order($subscription, $renewal_order);
                 }
 
+                $this->hydrate_renewal_order_from_subscription($subscription, $renewal_order);
+
                 wc_get_logger()->warning(
                     sprintf(
-                        'Discarding incomplete WCS renewal order %d for subscription %d and rebuilding natively.',
+                        'Hydrated incomplete WCS renewal order %d for subscription %d.',
                         (int) $renewal_order->get_id(),
                         (int) $subscription->get_id()
                     ),
                     array('source' => 'woo-subzero')
                 );
+
+                return $this->finalize_renewal_order($subscription, $renewal_order);
             }
         }
 
@@ -375,6 +379,13 @@ class WSZ_Renewal_Engine
             return null;
         }
 
+        $this->hydrate_renewal_order_from_subscription($subscription, $renewal_order);
+
+        return $this->finalize_renewal_order($subscription, $renewal_order);
+    }
+
+    private function hydrate_renewal_order_from_subscription(WC_Order $subscription, WC_Order $renewal_order): void
+    {
         foreach ($subscription->get_items(array('line_item', 'fee', 'shipping', 'tax', 'coupon')) as $item) {
             $clone = clone $item;
             $clone->set_id(0);
@@ -386,7 +397,6 @@ class WSZ_Renewal_Engine
         $renewal_order->set_currency($subscription->get_currency());
         $renewal_order->set_total($subscription->get_total());
         $renewal_order->calculate_totals(false);
-        return $this->finalize_renewal_order($subscription, $renewal_order);
     }
 
     private function finalize_renewal_order(WC_Order $subscription, WC_Order $renewal_order): ?WC_Order
@@ -456,12 +466,7 @@ class WSZ_Renewal_Engine
         }
 
         if (count($subscription_items) > 0 && count($renewal_items) <= 0) {
-            $subscription_total = (float) $subscription->get_total();
-            $renewal_total = (float) $renewal_order->get_total();
-
-            if ($subscription_total > 0 && $renewal_total <= 0) {
-                return true;
-            }
+            return true;
         }
 
         return false;
