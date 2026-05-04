@@ -788,6 +788,11 @@ class WSZ_Subscription_Manager
         }
 
         $subscription->update_meta_data('_requires_manual_renewal', $enabled ? 'yes' : 'no');
+
+        if (!$enabled) {
+            $subscription->update_meta_data('_wsz_manual_renewal_fallback_reason', '');
+        }
+
         $subscription->save();
     }
 

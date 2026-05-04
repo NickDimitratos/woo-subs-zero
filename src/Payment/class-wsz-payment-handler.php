@@ -25,6 +25,8 @@ class WSZ_Payment_Handler
 
         add_action('woocommerce_subscription_failing_payment_method_updated', array($this, 'handle_failing_payment_method_update'), 10, 3);
         add_action('woocommerce_subscriptions_changed_failing_payment_method', array($this, 'handle_failing_payment_method_update'), 10, 3);
+        add_action('woocommerce_subscription_payment_method_updated', array($this, 'handle_subscription_payment_method_updated'), 10, 3);
+        add_action('woocommerce_subscription_renewal_payment_complete', array($this, 'handle_manual_renewal_payment_complete'), 10, 2);
     }
 
     /**
@@ -60,6 +62,8 @@ class WSZ_Payment_Handler
         }
 
         if ('' === $gateway_id || !$this->is_gateway_available($gateway_id)) {
+            $subscription->update_meta_data('_wsz_manual_renewal_fallback_reason', 'gateway_unavailable');
+            $subscription->save();
             $this->subscription_manager->set_manual_renewal($subscription, true);
             $renewal_order->update_status(
                 'pending',
@@ -174,15 +178,21 @@ class WSZ_Payment_Handler
         }
 
         $gateway_id = sanitize_key($gateway_id);
+        $gateway_updated = false;
 
         if ('' !== $gateway_id && $this->is_gateway_registered($gateway_id)) {
             $subscription->set_payment_method($gateway_id);
             $subscription->save();
+            $gateway_updated = true;
         } elseif ('' !== $gateway_id && function_exists('wc_get_logger')) {
             wc_get_logger()->warning(
                 sprintf('Ignoring unknown WooCommerce gateway id "%s" for subscription %d.', $gateway_id, $subscription->get_id()),
                 array('source' => 'woo-subzero')
             );
+        }
+
+        if ($this->should_auto_restore_automatic_renewals() && ($token_id > 0 || $gateway_updated)) {
+            $this->subscription_manager->set_manual_renewal($subscription, false);
         }
 
         do_action('wsz_subs_payment_context_updated', $subscription, $token_id, $gateway_id);
@@ -206,7 +216,17 @@ class WSZ_Payment_Handler
         }
 
         $token_id = $this->extract_token_id($payment_meta);
-        $gateway_id = is_string($new_payment_method) ? sanitize_key($new_payment_method) : '';
+        $gateway_id = '';
+
+        if (is_string($new_payment_method)) {
+            $gateway_id = sanitize_key($new_payment_method);
+        } elseif ($new_payment_method instanceof WC_Order) {
+            $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+            if ($token_id <= 0) {
+                $order_token = $new_payment_method->get_meta('_payment_token_id', true);
+                $token_id = is_numeric($order_token) ? (int) $order_token : 0;
+            }
+        }
 
         $this->update_subscription_payment_context($subscription, $token_id, $gateway_id);
 
@@ -217,6 +237,66 @@ class WSZ_Payment_Handler
             $token_id,
             $payment_meta
         );
+    }
+
+    /**
+     * @param mixed $subscription_or_id
+     * @param mixed $new_payment_method
+     */
+    public function handle_subscription_payment_method_updated($subscription_or_id, $new_payment_method = '', $old_payment_method = ''): void
+    {
+        $subscription = $subscription_or_id instanceof WC_Order
+            ? $subscription_or_id
+            : $this->subscription_manager->get_subscription((int) $subscription_or_id);
+
+        if (!($subscription instanceof WC_Order)) {
+            return;
+        }
+
+        $gateway_id = is_string($new_payment_method) ? sanitize_key($new_payment_method) : '';
+
+        if ('' === $gateway_id) {
+            $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+        }
+
+        $this->update_subscription_payment_context($subscription, 0, $gateway_id);
+    }
+
+    /**
+     * @param mixed $subscription
+     * @param mixed $renewal_order
+     */
+    public function handle_manual_renewal_payment_complete($subscription, $renewal_order): void
+    {
+        if (!($subscription instanceof WC_Order) || !($renewal_order instanceof WC_Order)) {
+            return;
+        }
+
+        if (!$this->should_auto_restore_automatic_renewals()) {
+            return;
+        }
+
+        if (!$this->subscription_manager->is_manual_renewal($subscription)) {
+            return;
+        }
+
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+
+        if ('' === $gateway_id) {
+            $gateway_id = sanitize_key((string) $renewal_order->get_payment_method());
+        }
+
+        if ('' === $gateway_id || !$this->is_gateway_registered($gateway_id)) {
+            return;
+        }
+
+        $token_id = 0;
+        $renewal_order_token = $renewal_order->get_meta('_payment_token_id', true);
+        if (is_numeric($renewal_order_token)) {
+            $token_id = (int) $renewal_order_token;
+        }
+
+        $this->update_subscription_payment_context($subscription, $token_id, $gateway_id);
     }
 
     /**
@@ -274,5 +354,23 @@ class WSZ_Payment_Handler
         $registered = $gateways->payment_gateways();
 
         return is_array($registered) ? $registered : array();
+    }
+
+    private function should_auto_restore_automatic_renewals(): bool
+    {
+        if (!function_exists('get_option')) {
+            return true;
+        }
+
+        $options = get_option('wsz_subs_options', array());
+        if (!is_array($options)) {
+            return true;
+        }
+
+        $value = isset($options['auto_restore_automatic_renewals'])
+            ? sanitize_key((string) $options['auto_restore_automatic_renewals'])
+            : 'yes';
+
+        return 'yes' === $value;
     }
 }
