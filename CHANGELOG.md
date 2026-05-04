@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.6] - 2026-05-04
+
+### Added
+
+- Added `auto_restore_automatic_renewals` feature toggle (default `yes`) to restore automatic renewals after successful payment recovery.
+
+### Changed
+
+- Recovery flow now returns subscriptions from manual renewal mode to automatic renewal mode when payment context is recovered (gateway/token update).
+- Successful manual renewal payments now trigger automatic-renewal restoration when a valid gateway context exists.
+- Improved failing-payment-method handler compatibility for alternate hook signatures used by subscription/gateway integrations.
+
+### Tests
+
+- Added payment recovery regressions covering:
+  - auto-restore enabled/disabled behavior
+  - manual renewal payment completion recovery
+  - failing payment method update signatures including renewal-order payload usage
+
 ## [0.1.4] - 2026-04-28
 
 ### Changed
