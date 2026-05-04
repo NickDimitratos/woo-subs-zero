@@ -446,6 +446,7 @@ class WSZ_Renewal_Engine
 
         $parent_order = $this->resolve_parent_order_for_payment_context($subscription);
         if (!($parent_order instanceof WC_Order)) {
+            $this->copy_resolved_payment_token_to_renewal($subscription, $renewal_order);
             return;
         }
 
@@ -454,6 +455,15 @@ class WSZ_Renewal_Engine
         }
 
         $this->subscription_manager->copy_payment_context_meta($parent_order, $renewal_order);
+        $this->copy_resolved_payment_token_to_renewal($subscription, $renewal_order);
+    }
+
+    private function copy_resolved_payment_token_to_renewal(WC_Order $subscription, WC_Order $renewal_order): void
+    {
+        $token = $this->payment_handler->get_payment_token_for_subscription($subscription);
+        if ($token instanceof WC_Payment_Token) {
+            $renewal_order->update_meta_data('_payment_token_id', (int) $token->get_id());
+        }
     }
 
     private function resolve_parent_order_for_payment_context(WC_Order $subscription): ?WC_Order

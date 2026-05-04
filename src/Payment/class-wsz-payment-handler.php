@@ -32,6 +32,8 @@ class WSZ_Payment_Handler
         add_action('woocommerce_payment_complete', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 1);
         add_action('woocommerce_order_status_processing', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 2);
         add_action('woocommerce_order_status_completed', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 2);
+        add_action('wsz_subs_subscription_activated', array($this, 'sync_subscription_from_parent_order'), 20, 1);
+        add_filter('woocommerce_subscription_payment_meta', array($this, 'register_subscription_payment_meta'), 10, 2);
     }
 
     /**
@@ -66,7 +68,14 @@ class WSZ_Payment_Handler
             return;
         }
 
-        if ('' === $gateway_id || !$this->is_gateway_registered($gateway_id)) {
+        $gateway_registered = $this->is_gateway_registered($gateway_id);
+        $has_reusable_payment_context = false;
+
+        if (!$gateway_registered && '' !== $gateway_id) {
+            $has_reusable_payment_context = $this->get_payment_token_for_subscription($subscription) instanceof WC_Payment_Token;
+        }
+
+        if ('' === $gateway_id || (!$gateway_registered && !$has_reusable_payment_context)) {
             $subscription->update_meta_data('_wsz_manual_renewal_fallback_reason', 'gateway_unavailable');
             $subscription->save();
             $this->subscription_manager->set_manual_renewal($subscription, true);
@@ -193,7 +202,7 @@ class WSZ_Payment_Handler
         $gateway_id = sanitize_key($gateway_id);
         $gateway_updated = false;
 
-        if ('' !== $gateway_id && $this->is_gateway_registered($gateway_id)) {
+        if ('' !== $gateway_id && ($this->is_gateway_registered($gateway_id) || $token_id > 0)) {
             $subscription->set_payment_method($gateway_id);
             $subscription->save();
             $gateway_updated = true;
@@ -368,6 +377,80 @@ class WSZ_Payment_Handler
     }
 
     /**
+     * @param mixed $subscription
+     */
+    public function sync_subscription_from_parent_order($subscription): void
+    {
+        if (!($subscription instanceof WC_Order)) {
+            return;
+        }
+
+        $parent_order = $this->resolve_parent_order($subscription);
+
+        if (!($parent_order instanceof WC_Order)) {
+            return;
+        }
+
+        $this->subscription_manager->copy_payment_context_meta($parent_order, $subscription);
+
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+        $parent_gateway_id = sanitize_key((string) $parent_order->get_payment_method());
+
+        if ('' === $gateway_id) {
+            $gateway_id = $parent_gateway_id;
+        }
+
+        $token_id = $this->subscription_manager->get_payment_token_id($subscription);
+
+        if ($token_id <= 0) {
+            $token_id = $this->resolve_token_id_from_order($parent_order);
+        }
+
+        if ($token_id <= 0 && '' !== $gateway_id) {
+            $token_id = $this->resolve_fallback_token_id_for_gateway($subscription, $gateway_id);
+        }
+
+        if ($token_id > 0 || ('' !== $gateway_id && $this->is_gateway_registered($gateway_id))) {
+            $this->update_subscription_payment_context($subscription, $token_id, $gateway_id);
+            return;
+        }
+
+        $subscription->save();
+    }
+
+    /**
+     * @param mixed $payment_meta
+     * @param mixed $subscription
+     */
+    public function register_subscription_payment_meta($payment_meta, $subscription): array
+    {
+        if (!is_array($payment_meta) || !($subscription instanceof WC_Order)) {
+            return is_array($payment_meta) ? $payment_meta : array();
+        }
+
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+
+        if ('' === $gateway_id) {
+            return $payment_meta;
+        }
+
+        if (!isset($payment_meta[$gateway_id]) || !is_array($payment_meta[$gateway_id])) {
+            $payment_meta[$gateway_id] = array();
+        }
+
+        if (!isset($payment_meta[$gateway_id]['post_meta']) || !is_array($payment_meta[$gateway_id]['post_meta'])) {
+            $payment_meta[$gateway_id]['post_meta'] = array();
+        }
+
+        $payment_meta[$gateway_id]['post_meta']['_payment_token_id'] = array(
+            'value' => $this->subscription_manager->get_payment_token_id($subscription),
+            'label' => __('WooCommerce payment token ID', 'woo-subzero'),
+        );
+
+        return $payment_meta;
+    }
+
+    /**
      * @param mixed $payment_meta
      */
     private function extract_token_id($payment_meta): int
@@ -426,12 +509,19 @@ class WSZ_Payment_Handler
 
     private function resolve_fallback_token_id(WC_Order $subscription): int
     {
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+
+        return $this->resolve_fallback_token_id_for_gateway($subscription, $gateway_id);
+    }
+
+    private function resolve_fallback_token_id_for_gateway(WC_Order $subscription, string $gateway_id): int
+    {
         if (!class_exists('WC_Payment_Tokens')) {
             return 0;
         }
 
         $customer_id = (int) $subscription->get_customer_id();
-        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+        $gateway_id = sanitize_key($gateway_id);
 
         if ($customer_id <= 0 || '' === $gateway_id || !is_callable(array('WC_Payment_Tokens', 'get_customer_tokens'))) {
             return 0;
@@ -466,6 +556,23 @@ class WSZ_Payment_Handler
         }
 
         return $fallback_token_id;
+    }
+
+    private function resolve_parent_order(WC_Order $subscription): ?WC_Order
+    {
+        $parent_order_id = (int) $subscription->get_meta('_wsz_parent_order_id', true);
+
+        if ($parent_order_id <= 0 && is_callable(array($subscription, 'get_parent_id'))) {
+            $parent_order_id = (int) $subscription->get_parent_id();
+        }
+
+        if ($parent_order_id <= 0 || !function_exists('wc_get_order')) {
+            return null;
+        }
+
+        $parent_order = wc_get_order($parent_order_id);
+
+        return $parent_order instanceof WC_Order ? $parent_order : null;
     }
 
     private function resolve_token_id_from_order(WC_Order $order): int

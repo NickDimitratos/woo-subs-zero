@@ -13,6 +13,6 @@
     },
     "scripts": {
         "test": "phpunit -c phpunit.xml.dist",
-        "lint": "find . -name '*.php' -print0 | xargs -0 -n1 php -l"
+        "lint": "find . -path './vendor' -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l"
     }
 }

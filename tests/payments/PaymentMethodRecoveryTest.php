@@ -64,6 +64,13 @@ if (!class_exists('WC_Payment_Tokens')) {
     }
 }
 
+if (!function_exists('wc_get_order')) {
+    function wc_get_order($order_id)
+    {
+        return $GLOBALS['wsz_subs_test_orders'][(int) $order_id] ?? null;
+    }
+}
+
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/class-wsz-payment-handler.php';
 
@@ -95,6 +102,7 @@ final class PaymentMethodRecoveryTest extends TestCase
     protected function tearDown(): void
     {
         unset($GLOBALS['wsz_subs_test_options']);
+        unset($GLOBALS['wsz_subs_test_orders']);
         parent::tearDown();
     }
 
@@ -505,6 +513,98 @@ final class PaymentMethodRecoveryTest extends TestCase
             ->method('save');
 
         $handler->sync_subscriptions_from_paid_parent_order($parent_order);
+    }
+
+    public function test_subscription_activation_syncs_parent_order_token_context(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $parent_order = $this->createMock(PaymentMethodRecoveryOrderWithTokens::class);
+        $GLOBALS['wsz_subs_test_orders'][501] = $parent_order;
+
+        $subscription
+            ->expects($this->once())
+            ->method('get_meta')
+            ->with('_wsz_parent_order_id', true)
+            ->willReturn(501);
+
+        $subscription
+            ->expects($this->once())
+            ->method('get_payment_method')
+            ->willReturn('');
+
+        $subscription
+            ->expects($this->once())
+            ->method('set_payment_method')
+            ->with('stripe');
+
+        $subscription
+            ->expects($this->once())
+            ->method('save');
+
+        $parent_order
+            ->expects($this->once())
+            ->method('get_payment_method')
+            ->willReturn('stripe');
+
+        $parent_order
+            ->expects($this->once())
+            ->method('get_meta')
+            ->with('_payment_token_id', true)
+            ->willReturn('');
+
+        $parent_order
+            ->expects($this->once())
+            ->method('get_payment_tokens')
+            ->willReturn(array(new PaymentMethodRecoveryToken(778)));
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($parent_order, $subscription)
+            ->willReturn(true);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_payment_token_id')
+            ->with($subscription)
+            ->willReturn(0);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_payment_token_id')
+            ->with($subscription, 778);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_manual_renewal')
+            ->with($subscription, false);
+
+        $handler->sync_subscription_from_parent_order($subscription);
+    }
+
+    public function test_register_subscription_payment_meta_exposes_token_id_for_gateway(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->expects($this->once())
+            ->method('get_payment_method')
+            ->willReturn('stripe');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_payment_token_id')
+            ->with($subscription)
+            ->willReturn(778);
+
+        $meta = $handler->register_subscription_payment_meta(array(), $subscription);
+
+        $this->assertSame(778, $meta['stripe']['post_meta']['_payment_token_id']['value'] ?? null);
     }
 }
 

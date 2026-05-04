@@ -1505,6 +1505,7 @@ class WSZ_Subscription_Manager
         }
 
         $copied = false;
+        $copied_token_id = false;
         $meta_rows = $source->get_meta_data();
 
         if (!is_array($meta_rows)) {
@@ -1520,9 +1521,47 @@ class WSZ_Subscription_Manager
 
             $target->update_meta_data($key, $this->get_meta_row_value($meta_row));
             $copied = true;
+
+            if ('_payment_token_id' === $key) {
+                $copied_token_id = true;
+            }
+        }
+
+        if (!$copied_token_id) {
+            $token_id = $this->resolve_payment_token_id_from_order($source);
+
+            if ($token_id > 0) {
+                $target->update_meta_data('_payment_token_id', $token_id);
+                $copied = true;
+            }
         }
 
         return $copied;
+    }
+
+    private function resolve_payment_token_id_from_order(WC_Order $order): int
+    {
+        if (!is_callable(array($order, 'get_payment_tokens'))) {
+            return 0;
+        }
+
+        $tokens = $order->get_payment_tokens();
+
+        if (!is_array($tokens) || empty($tokens)) {
+            return 0;
+        }
+
+        foreach ($tokens as $token) {
+            if (is_numeric($token)) {
+                return max(0, (int) $token);
+            }
+
+            if ($token instanceof WC_Payment_Token) {
+                return max(0, (int) $token->get_id());
+            }
+        }
+
+        return 0;
     }
 
     private function get_meta_row_key($meta_row): string
