@@ -386,15 +386,32 @@ class WSZ_Renewal_Engine
 
     private function hydrate_renewal_order_from_subscription(WC_Order $subscription, WC_Order $renewal_order): void
     {
-        foreach ($subscription->get_items(array('line_item', 'fee', 'shipping', 'tax', 'coupon')) as $item) {
-            $clone = clone $item;
-            $clone->set_id(0);
-            $renewal_order->add_item($clone);
+        $renewal_items = $renewal_order->get_items(array('line_item'));
+
+        if (is_array($renewal_items) && count($renewal_items) <= 0) {
+            foreach ($subscription->get_items(array('line_item', 'fee', 'shipping', 'tax', 'coupon')) as $item) {
+                $clone = clone $item;
+                $clone->set_id(0);
+                $renewal_order->add_item($clone);
+            }
+        }
+
+        if (is_callable(array($renewal_order, 'set_customer_id'))) {
+            $renewal_order->set_customer_id($subscription->get_customer_id());
         }
 
         $renewal_order->set_payment_method($subscription->get_payment_method());
         $renewal_order->set_payment_method_title($subscription->get_payment_method_title());
         $renewal_order->set_currency($subscription->get_currency());
+
+        if (
+            is_callable(array($subscription, 'get_prices_include_tax'))
+            && is_callable(array($renewal_order, 'set_prices_include_tax'))
+        ) {
+            $renewal_order->set_prices_include_tax($subscription->get_prices_include_tax());
+        }
+
+        $this->copy_order_address_context($subscription, $renewal_order);
         $renewal_order->set_total($subscription->get_total());
         $renewal_order->calculate_totals(false);
     }
@@ -469,7 +486,88 @@ class WSZ_Renewal_Engine
             return true;
         }
 
+        if ($this->is_missing_customer_context($subscription, $renewal_order)) {
+            return true;
+        }
+
         return false;
+    }
+
+    private function is_missing_customer_context(WC_Order $subscription, WC_Order $renewal_order): bool
+    {
+        if ((int) $subscription->get_customer_id() > 0 && (int) $renewal_order->get_customer_id() <= 0) {
+            return true;
+        }
+
+        foreach ($this->get_address_fields() as $type => $fields) {
+            foreach ($fields as $field) {
+                $source_value = $this->get_order_address_value($subscription, $type, $field);
+                $target_value = $this->get_order_address_value($renewal_order, $type, $field);
+
+                if ('' !== $source_value && '' === $target_value) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function copy_order_address_context(WC_Order $subscription, WC_Order $renewal_order): void
+    {
+        foreach ($this->get_address_fields() as $type => $fields) {
+            foreach ($fields as $field) {
+                $getter = sprintf('get_%s_%s', $type, $field);
+                $setter = sprintf('set_%s_%s', $type, $field);
+
+                if (!is_callable(array($subscription, $getter)) || !is_callable(array($renewal_order, $setter))) {
+                    continue;
+                }
+
+                $renewal_order->{$setter}($subscription->{$getter}());
+            }
+        }
+    }
+
+    private function get_order_address_value(WC_Order $order, string $type, string $field): string
+    {
+        $getter = sprintf('get_%s_%s', $type, $field);
+
+        if (!is_callable(array($order, $getter))) {
+            return '';
+        }
+
+        return trim((string) $order->{$getter}());
+    }
+
+    private function get_address_fields(): array
+    {
+        return array(
+            'billing' => array(
+                'first_name',
+                'last_name',
+                'company',
+                'address_1',
+                'address_2',
+                'city',
+                'postcode',
+                'country',
+                'state',
+                'email',
+                'phone',
+            ),
+            'shipping' => array(
+                'first_name',
+                'last_name',
+                'company',
+                'address_1',
+                'address_2',
+                'city',
+                'postcode',
+                'country',
+                'state',
+            ),
+        );
     }
 
     private function advance_next_payment_and_schedule(WC_Order $subscription): void

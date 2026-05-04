@@ -28,6 +28,7 @@ class WSZ_Admin_Subscriptions
 
         add_filter('post_row_actions', array($this, 'add_toggle_manual_renewal_action'), 10, 2);
         add_action('admin_post_wsz_subs_toggle_manual_renewal', array($this, 'handle_toggle_manual_renewal'));
+        add_action('admin_post_wsz_subs_change_subscription_status', array($this, 'handle_change_subscription_status'));
         add_action('admin_post_wsz_subs_cleanup_finite_term_renewals', array($this, 'handle_finite_term_cleanup'));
     }
 
@@ -384,6 +385,15 @@ class WSZ_Admin_Subscriptions
             );
 
             add_meta_box(
+                'wsz_subs_subscription_actions',
+                __('Subscription Actions', 'woo-subzero'),
+                array($this, 'render_subscription_actions_meta_box'),
+                $screen_id,
+                'side',
+                'high'
+            );
+
+            add_meta_box(
                 'wsz_subs_meta_keys',
                 __('Subscription Meta Keys', 'woo-subzero'),
                 array($this, 'render_subscription_meta_keys_meta_box'),
@@ -528,6 +538,53 @@ class WSZ_Admin_Subscriptions
         }
 
         echo '</tbody></table>';
+    }
+
+    /**
+     * @param mixed $post_or_order
+     */
+    public function render_subscription_actions_meta_box($post_or_order): void
+    {
+        $subscription = $this->resolve_subscription_from_meta_box_subject($post_or_order);
+
+        if (!($subscription instanceof WC_Order)) {
+            echo '<p>' . esc_html__('Subscription context not available.', 'woo-subzero') . '</p>';
+            return;
+        }
+
+        $subscription_id = (int) $subscription->get_id();
+        $current_status = WSZ_Subscription_Manager::normalize_status((string) $subscription->get_status());
+        $actions = $this->get_subscription_admin_actions($subscription);
+
+        echo '<p><strong>' . esc_html__('Current status:', 'woo-subzero') . '</strong> ';
+        echo esc_html($this->get_subscription_status_label($current_status));
+        echo '</p>';
+
+        if (empty($actions)) {
+            echo '<p>' . esc_html__('No manual lifecycle actions are available for this status.', 'woo-subzero') . '</p>';
+            echo '<p class="description">' . esc_html__('Cancelled and expired subscriptions are terminal states.', 'woo-subzero') . '</p>';
+            return;
+        }
+
+        echo '<p class="description">' . esc_html__('Use these subscription lifecycle actions instead of changing the raw Woo order status manually.', 'woo-subzero') . '</p>';
+
+        foreach ($actions as $target_status => $label) {
+            $url = wp_nonce_url(
+                add_query_arg(
+                    array(
+                        'action' => 'wsz_subs_change_subscription_status',
+                        'subscription_id' => $subscription_id,
+                        'target_status' => $target_status,
+                    ),
+                    admin_url('admin-post.php')
+                ),
+                'wsz_subs_change_subscription_status_' . $subscription_id . '_' . $target_status
+            );
+
+            echo '<p><a class="button button-secondary" href="' . esc_url($url) . '">';
+            echo esc_html($label);
+            echo '</a></p>';
+        }
     }
 
     /**
@@ -1048,6 +1105,57 @@ class WSZ_Admin_Subscriptions
     }
 
     /**
+     * @return array<string,string>
+     */
+    public function get_subscription_admin_actions(WC_Order $subscription): array
+    {
+        $status = WSZ_Subscription_Manager::normalize_status((string) $subscription->get_status());
+        $valid_transitions = WSZ_Subscription_Manager::get_valid_transitions();
+        $targets = $valid_transitions[$status] ?? array();
+        $actions = array();
+
+        foreach ($targets as $target_status) {
+            $actions[$target_status] = $this->get_subscription_admin_action_label($status, $target_status);
+        }
+
+        return $actions;
+    }
+
+    public function change_subscription_status(int $subscription_id, string $target_status): string
+    {
+        $subscription_id = max(0, $subscription_id);
+        $target_status = WSZ_Subscription_Manager::normalize_status($target_status);
+
+        if ($subscription_id <= 0 || '' === $target_status) {
+            return 'invalid';
+        }
+
+        $subscription = $this->subscription_manager->get_subscription($subscription_id);
+
+        if (!($subscription instanceof WC_Order)) {
+            return 'not-found';
+        }
+
+        $current_status = WSZ_Subscription_Manager::normalize_status((string) $subscription->get_status());
+
+        if (!WSZ_Subscription_Manager::is_valid_transition($current_status, $target_status) || $current_status === $target_status) {
+            return 'invalid';
+        }
+
+        $changed = $this->subscription_manager->transition_status(
+            $subscription,
+            $target_status,
+            sprintf(
+                __('Manual admin lifecycle action: %1$s -> %2$s.', 'woo-subzero'),
+                $this->get_subscription_status_label($current_status),
+                $this->get_subscription_status_label($target_status)
+            )
+        );
+
+        return $changed ? 'changed' : 'failed';
+    }
+
+    /**
      * @param array<string,string> $actions
      * @param WP_Post $post
      */
@@ -1115,5 +1223,91 @@ class WSZ_Admin_Subscriptions
             wp_get_referer() ?: admin_url('edit.php?post_type=shop_subscription')
         );
         exit;
+    }
+
+    public function handle_change_subscription_status(): void
+    {
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(esc_html__('Unauthorized.', 'woo-subzero'));
+        }
+
+        $subscription_id = isset($_GET['subscription_id']) ? absint($_GET['subscription_id']) : 0;
+        $target_status = isset($_GET['target_status']) ? sanitize_key((string) wp_unslash($_GET['target_status'])) : '';
+
+        check_admin_referer('wsz_subs_change_subscription_status_' . $subscription_id . '_' . $target_status);
+
+        $result = $this->change_subscription_status($subscription_id, $target_status);
+        $redirect_url = wp_get_referer() ?: admin_url('edit.php?post_type=shop_subscription');
+
+        wp_safe_redirect(
+            add_query_arg(
+                array(
+                    'wsz_subs_status_change' => $result,
+                ),
+                $redirect_url
+            )
+        );
+        exit;
+    }
+
+    private function get_subscription_admin_action_label(string $current_status, string $target_status): string
+    {
+        $current_status = WSZ_Subscription_Manager::normalize_status($current_status);
+        $target_status = WSZ_Subscription_Manager::normalize_status($target_status);
+
+        if ('active' === $current_status && 'on-hold' === $target_status) {
+            return __('Suspend subscription', 'woo-subzero');
+        }
+
+        if ('active' === $current_status && 'pending-cancel' === $target_status) {
+            return __('Cancel at period end', 'woo-subzero');
+        }
+
+        if ('active' === $current_status && 'cancelled' === $target_status) {
+            return __('Cancel now', 'woo-subzero');
+        }
+
+        if ('on-hold' === $current_status && 'active' === $target_status) {
+            return __('Reactivate subscription', 'woo-subzero');
+        }
+
+        if ('on-hold' === $current_status && 'cancelled' === $target_status) {
+            return __('Cancel now', 'woo-subzero');
+        }
+
+        if ('pending' === $current_status && 'active' === $target_status) {
+            return __('Activate subscription', 'woo-subzero');
+        }
+
+        if ('pending' === $current_status && 'cancelled' === $target_status) {
+            return __('Cancel subscription', 'woo-subzero');
+        }
+
+        if ('pending-cancel' === $current_status && 'cancelled' === $target_status) {
+            return __('Cancel now', 'woo-subzero');
+        }
+
+        if ('expired' === $target_status) {
+            return __('Expire subscription', 'woo-subzero');
+        }
+
+        return sprintf(
+            __('Change to %s', 'woo-subzero'),
+            $this->get_subscription_status_label($target_status)
+        );
+    }
+
+    private function get_subscription_status_label(string $status): string
+    {
+        $labels = array(
+            'pending' => __('Pending activation', 'woo-subzero'),
+            'active' => __('Active', 'woo-subzero'),
+            'on-hold' => __('On hold', 'woo-subzero'),
+            'pending-cancel' => __('Pending cancellation', 'woo-subzero'),
+            'cancelled' => __('Cancelled', 'woo-subzero'),
+            'expired' => __('Expired', 'woo-subzero'),
+        );
+
+        return $labels[WSZ_Subscription_Manager::normalize_status($status)] ?? $status;
     }
 }
