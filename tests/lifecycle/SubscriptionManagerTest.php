@@ -60,6 +60,16 @@ if (!function_exists('wc_get_order')) {
     }
 }
 
+if (!class_exists('WC_Payment_Token')) {
+    class WC_Payment_Token
+    {
+        public function get_id()
+        {
+            return 0;
+        }
+    }
+}
+
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
 
 final class SubscriptionManagerTest extends TestCase
@@ -542,5 +552,52 @@ final class SubscriptionManagerTest extends TestCase
             ),
             $copied
         );
+    }
+
+    public function test_copy_payment_context_meta_copies_order_payment_token_objects(): void
+    {
+        $manager = new WSZ_Subscription_Manager();
+        $source = $this->createMock(SubscriptionManagerOrderWithPaymentTokens::class);
+
+        $source
+            ->expects($this->once())
+            ->method('get_meta_data')
+            ->willReturn(array());
+
+        $source
+            ->expects($this->once())
+            ->method('get_payment_tokens')
+            ->willReturn(array(new SubscriptionManagerPaymentToken(987)));
+
+        $target = $this->createMock(WC_Order::class);
+        $target
+            ->expects($this->once())
+            ->method('update_meta_data')
+            ->with('_payment_token_id', 987);
+
+        $this->assertTrue($manager->copy_payment_context_meta($source, $target));
+    }
+}
+
+class SubscriptionManagerOrderWithPaymentTokens extends WC_Order
+{
+    public function get_payment_tokens()
+    {
+        return array();
+    }
+}
+
+final class SubscriptionManagerPaymentToken extends WC_Payment_Token
+{
+    private int $id;
+
+    public function __construct(int $id)
+    {
+        $this->id = $id;
+    }
+
+    public function get_id()
+    {
+        return $this->id;
     }
 }

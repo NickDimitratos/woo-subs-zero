@@ -3,6 +3,11 @@ name: Build and Release Package
 on:
   push:
     branches:
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
       - main
   workflow_dispatch:
 
@@ -76,7 +81,21 @@ jobs:
           echo "Resolved version: $version"
           echo "Version source: $source"
 
-      - name: Install production dependencies
+      - name: Validate Composer metadata
+        if: ${{ hashFiles('composer.json') != '' }}
+        run: composer validate --strict
+
+      - name: Install dependencies
+        if: ${{ hashFiles('composer.json') != '' }}
+        run: composer install --prefer-dist --no-interaction
+
+      - name: Lint PHP files
+        run: composer run lint
+
+      - name: Run PHPUnit
+        run: composer run test
+
+      - name: Install production dependencies for package
         if: ${{ hashFiles('composer.json') != '' }}
         run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
 
@@ -122,6 +141,7 @@ jobs:
           path: ${{ steps.package.outputs.zip_path }}
 
       - name: Create or update GitHub release and attach ZIP
+        if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
