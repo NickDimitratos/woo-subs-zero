@@ -29,10 +29,40 @@ if (!function_exists('esc_html__')) {
     }
 }
 
+if (!function_exists('esc_url')) {
+    function esc_url($url)
+    {
+        return (string) $url;
+    }
+}
+
 if (!function_exists('current_user_can')) {
     function current_user_can($capability)
     {
         return true;
+    }
+}
+
+if (!function_exists('admin_url')) {
+    function admin_url($path = '')
+    {
+        return 'https://example.test/wp-admin/' . ltrim((string) $path, '/');
+    }
+}
+
+if (!function_exists('add_query_arg')) {
+    function add_query_arg($args, $url = '')
+    {
+        $separator = false === strpos((string) $url, '?') ? '?' : '&';
+
+        return (string) $url . $separator . http_build_query((array) $args);
+    }
+}
+
+if (!function_exists('wp_nonce_url')) {
+    function wp_nonce_url($actionurl, $action = -1, $name = '_wpnonce')
+    {
+        return add_query_arg(array((string) $name => 'nonce-' . (string) $action), (string) $actionurl);
     }
 }
 
@@ -285,6 +315,7 @@ final class AdminSubscriptionsTest extends TestCase
         )));
 
         $this->assertContains('wsz_subs_meta_keys', $meta_box_ids);
+        $this->assertContains('wsz_subs_subscription_actions', $meta_box_ids);
 
         $removed_meta_box_ids = array_values(array_unique(array_map(
             static function (array $box): string {
@@ -317,6 +348,93 @@ final class AdminSubscriptionsTest extends TestCase
         $output = (string) ob_get_clean();
 
         $this->assertStringContainsString('No upcoming renewal actions are currently scheduled.', $output);
+    }
+
+    public function test_render_subscription_actions_meta_box_displays_only_valid_active_transitions(): void
+    {
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(44);
+        $subscription->method('get_status')->willReturn('active');
+
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->with(44)->willReturn($subscription);
+
+        $admin = new WSZ_Admin_Subscriptions($manager);
+
+        $post = new WP_Post();
+        $post->ID = 44;
+
+        ob_start();
+        $admin->render_subscription_actions_meta_box($post);
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('Current status:', $output);
+        $this->assertStringContainsString('Suspend subscription', $output);
+        $this->assertStringContainsString('Cancel at period end', $output);
+        $this->assertStringContainsString('Cancel now', $output);
+        $this->assertStringContainsString('Expire subscription', $output);
+        $this->assertStringNotContainsString('Reactivate subscription', $output);
+    }
+
+    public function test_render_subscription_actions_meta_box_marks_terminal_status_read_only(): void
+    {
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(45);
+        $subscription->method('get_status')->willReturn('cancelled');
+
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->with(45)->willReturn($subscription);
+
+        $admin = new WSZ_Admin_Subscriptions($manager);
+
+        $post = new WP_Post();
+        $post->ID = 45;
+
+        ob_start();
+        $admin->render_subscription_actions_meta_box($post);
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('No manual lifecycle actions are available for this status.', $output);
+        $this->assertStringContainsString('terminal states', $output);
+        $this->assertStringNotContainsString('button button-secondary', $output);
+    }
+
+    public function test_change_subscription_status_allows_valid_transition_through_manager(): void
+    {
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_status')->willReturn('active');
+
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->with(44)->willReturn($subscription);
+        $manager
+            ->expects($this->once())
+            ->method('transition_status')
+            ->with(
+                $subscription,
+                'on-hold',
+                $this->stringContains('Manual admin lifecycle action')
+            )
+            ->willReturn(true);
+
+        $admin = new WSZ_Admin_Subscriptions($manager);
+
+        $this->assertSame('changed', $admin->change_subscription_status(44, 'on-hold'));
+    }
+
+    public function test_change_subscription_status_rejects_invalid_transition(): void
+    {
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_status')->willReturn('active');
+
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->with(44)->willReturn($subscription);
+        $manager
+            ->expects($this->never())
+            ->method('transition_status');
+
+        $admin = new WSZ_Admin_Subscriptions($manager);
+
+        $this->assertSame('invalid', $admin->change_subscription_status(44, 'pending'));
     }
 
     public function test_filter_subscription_list_columns_returns_informational_shape(): void

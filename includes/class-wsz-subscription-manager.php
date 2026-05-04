@@ -1723,7 +1723,7 @@ class WSZ_Subscription_Manager
         $subscription->save();
     }
 
-    private static function normalize_status(string $status): string
+    public static function normalize_status(string $status): string
     {
         return preg_replace('/^wc-/', '', sanitize_key($status));
     }

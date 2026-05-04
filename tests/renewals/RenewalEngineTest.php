@@ -1257,4 +1257,485 @@ final class RenewalEngineTest extends TestCase
         $this->assertSame($renewal_order, $method->invoke($engine, $subscription));
     }
 
+    public function test_create_renewal_order_hydrates_thin_wcs_order_customer_context_in_place(): void
+    {
+        $subscription_item = $this->create_test_line_item();
+        $renewal_item = $this->create_test_line_item();
+
+        $subscription = $this->create_context_order(
+            930,
+            array($subscription_item),
+            array(
+                'customer_id' => 14,
+                'payment_method' => 'pay_gateway',
+                'payment_method_title' => 'Pay.nl',
+                'currency' => 'EUR',
+                'total' => 49.99,
+                'billing' => array(
+                    'first_name' => 'Nikos',
+                    'last_name' => 'Dimitratos',
+                    'company' => 'Koreli',
+                    'address_1' => 'Billing Street 1',
+                    'address_2' => 'Suite 2',
+                    'city' => 'Athens',
+                    'postcode' => '10557',
+                    'country' => 'GR',
+                    'state' => 'AT',
+                    'email' => 'nikos@example.com',
+                    'phone' => '+302100000000',
+                ),
+                'shipping' => array(
+                    'first_name' => 'Nikos',
+                    'last_name' => 'Dimitratos',
+                    'company' => 'Koreli',
+                    'address_1' => 'Shipping Street 3',
+                    'address_2' => 'Floor 4',
+                    'city' => 'Athens',
+                    'postcode' => '10558',
+                    'country' => 'GR',
+                    'state' => 'AT',
+                ),
+            )
+        );
+
+        $renewal_order = $this->create_context_order(
+            444,
+            array($renewal_item),
+            array(
+                'meta' => array(
+                    '_transaction_id' => 'PAYNL-TX-001',
+                ),
+            )
+        );
+
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $renewal_order;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($subscription, $renewal_order)
+            ->willReturn(false);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('add_related_order')
+            ->with($subscription, 444, 'renewal');
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $retry_manager = $this->createMock(WSZ_Retry_Manager::class);
+
+        $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
+
+        $method = new ReflectionMethod(WSZ_Renewal_Engine::class, 'create_renewal_order');
+        $method->setAccessible(true);
+
+        $this->assertSame($renewal_order, $method->invoke($engine, $subscription));
+        $this->assertSame(14, $renewal_order->get_customer_id());
+        $this->assertSame('Nikos', $renewal_order->get_billing_first_name());
+        $this->assertSame('Dimitratos', $renewal_order->get_billing_last_name());
+        $this->assertSame('nikos@example.com', $renewal_order->get_billing_email());
+        $this->assertSame('+302100000000', $renewal_order->get_billing_phone());
+        $this->assertSame('Shipping Street 3', $renewal_order->get_shipping_address_1());
+        $this->assertSame('10558', $renewal_order->get_shipping_postcode());
+        $this->assertSame('pay_gateway', $renewal_order->get_payment_method());
+        $this->assertSame('EUR', $renewal_order->get_currency());
+    }
+
+    public function test_native_renewal_order_hydrates_customer_context_from_subscription(): void
+    {
+        $subscription_item = $this->create_test_line_item();
+        $subscription = $this->create_context_order(
+            931,
+            array($subscription_item),
+            array(
+                'customer_id' => 22,
+                'payment_method' => 'pay_gateway',
+                'payment_method_title' => 'Pay.nl',
+                'currency' => 'EUR',
+                'total' => 29.5,
+                'billing' => array(
+                    'first_name' => 'Maria',
+                    'last_name' => 'Papadopoulou',
+                    'email' => 'maria@example.com',
+                    'phone' => '+302100000001',
+                ),
+                'shipping' => array(
+                    'first_name' => 'Maria',
+                    'last_name' => 'Papadopoulou',
+                    'address_1' => 'Delivery Road 9',
+                    'postcode' => '54624',
+                    'country' => 'GR',
+                ),
+            )
+        );
+        $renewal_order = $this->create_context_order(445, array());
+
+        $GLOBALS['wsz_test_wcs_renewal_order'] = null;
+        $GLOBALS['wsz_test_wc_created_order'] = $renewal_order;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($subscription, $renewal_order)
+            ->willReturn(false);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('add_related_order')
+            ->with($subscription, 445, 'renewal');
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $retry_manager = $this->createMock(WSZ_Retry_Manager::class);
+        $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
+
+        $method = new ReflectionMethod(WSZ_Renewal_Engine::class, 'create_renewal_order');
+        $method->setAccessible(true);
+
+        $this->assertSame($renewal_order, $method->invoke($engine, $subscription));
+        $this->assertSame(22, $renewal_order->get_customer_id());
+        $this->assertSame('Maria', $renewal_order->get_billing_first_name());
+        $this->assertSame('maria@example.com', $renewal_order->get_billing_email());
+        $this->assertSame('Delivery Road 9', $renewal_order->get_shipping_address_1());
+    }
+
+    private function create_test_line_item()
+    {
+        return new class {
+            private int $id = 1;
+
+            public function set_id($id): void
+            {
+                $this->id = (int) $id;
+            }
+        };
+    }
+
+    private function create_context_order(int $id, array $items, array $context = array()): WC_Order
+    {
+        return new class($id, $items, $context) extends WC_Order {
+            private int $id;
+            private array $items;
+            private array $meta;
+            private int $customer_id;
+            private string $payment_method;
+            private string $payment_method_title;
+            private string $currency;
+            private float $total;
+            private array $billing;
+            private array $shipping;
+
+            public function __construct(int $id, array $items, array $context)
+            {
+                $this->id = $id;
+                $this->items = $items;
+                $this->meta = $context['meta'] ?? array();
+                $this->customer_id = (int) ($context['customer_id'] ?? 0);
+                $this->payment_method = (string) ($context['payment_method'] ?? '');
+                $this->payment_method_title = (string) ($context['payment_method_title'] ?? '');
+                $this->currency = (string) ($context['currency'] ?? '');
+                $this->total = (float) ($context['total'] ?? 0);
+                $this->billing = $context['billing'] ?? array();
+                $this->shipping = $context['shipping'] ?? array();
+            }
+
+            public function get_id()
+            {
+                return $this->id;
+            }
+
+            public function get_customer_id()
+            {
+                return $this->customer_id;
+            }
+
+            public function set_customer_id($customer_id)
+            {
+                $this->customer_id = (int) $customer_id;
+            }
+
+            public function get_payment_method()
+            {
+                return $this->payment_method;
+            }
+
+            public function set_payment_method($gateway_id)
+            {
+                $this->payment_method = (string) $gateway_id;
+            }
+
+            public function get_payment_method_title()
+            {
+                return $this->payment_method_title;
+            }
+
+            public function set_payment_method_title($title)
+            {
+                $this->payment_method_title = (string) $title;
+            }
+
+            public function get_currency()
+            {
+                return $this->currency;
+            }
+
+            public function set_currency($currency)
+            {
+                $this->currency = (string) $currency;
+            }
+
+            public function get_total()
+            {
+                return $this->total;
+            }
+
+            public function set_total($total)
+            {
+                $this->total = (float) $total;
+            }
+
+            public function get_items($types = array())
+            {
+                $types = (array) $types;
+
+                if (empty($types) || in_array('line_item', $types, true)) {
+                    return $this->items;
+                }
+
+                return array();
+            }
+
+            public function add_item($item)
+            {
+                $this->items[] = $item;
+            }
+
+            public function calculate_totals($and_taxes = true)
+            {
+            }
+
+            public function save()
+            {
+            }
+
+            public function get_meta($key, $single = true)
+            {
+                return $this->meta[$key] ?? '';
+            }
+
+            public function get_meta_data()
+            {
+                return array();
+            }
+
+            public function update_meta_data($key, $value)
+            {
+                $this->meta[$key] = $value;
+            }
+
+            public function get_billing_first_name()
+            {
+                return (string) ($this->billing['first_name'] ?? '');
+            }
+
+            public function set_billing_first_name($value)
+            {
+                $this->billing['first_name'] = (string) $value;
+            }
+
+            public function get_billing_last_name()
+            {
+                return (string) ($this->billing['last_name'] ?? '');
+            }
+
+            public function set_billing_last_name($value)
+            {
+                $this->billing['last_name'] = (string) $value;
+            }
+
+            public function get_billing_company()
+            {
+                return (string) ($this->billing['company'] ?? '');
+            }
+
+            public function set_billing_company($value)
+            {
+                $this->billing['company'] = (string) $value;
+            }
+
+            public function get_billing_address_1()
+            {
+                return (string) ($this->billing['address_1'] ?? '');
+            }
+
+            public function set_billing_address_1($value)
+            {
+                $this->billing['address_1'] = (string) $value;
+            }
+
+            public function get_billing_address_2()
+            {
+                return (string) ($this->billing['address_2'] ?? '');
+            }
+
+            public function set_billing_address_2($value)
+            {
+                $this->billing['address_2'] = (string) $value;
+            }
+
+            public function get_billing_city()
+            {
+                return (string) ($this->billing['city'] ?? '');
+            }
+
+            public function set_billing_city($value)
+            {
+                $this->billing['city'] = (string) $value;
+            }
+
+            public function get_billing_postcode()
+            {
+                return (string) ($this->billing['postcode'] ?? '');
+            }
+
+            public function set_billing_postcode($value)
+            {
+                $this->billing['postcode'] = (string) $value;
+            }
+
+            public function get_billing_country()
+            {
+                return (string) ($this->billing['country'] ?? '');
+            }
+
+            public function set_billing_country($value)
+            {
+                $this->billing['country'] = (string) $value;
+            }
+
+            public function get_billing_state()
+            {
+                return (string) ($this->billing['state'] ?? '');
+            }
+
+            public function set_billing_state($value)
+            {
+                $this->billing['state'] = (string) $value;
+            }
+
+            public function get_billing_email()
+            {
+                return (string) ($this->billing['email'] ?? '');
+            }
+
+            public function set_billing_email($value)
+            {
+                $this->billing['email'] = (string) $value;
+            }
+
+            public function get_billing_phone()
+            {
+                return (string) ($this->billing['phone'] ?? '');
+            }
+
+            public function set_billing_phone($value)
+            {
+                $this->billing['phone'] = (string) $value;
+            }
+
+            public function get_shipping_first_name()
+            {
+                return (string) ($this->shipping['first_name'] ?? '');
+            }
+
+            public function set_shipping_first_name($value)
+            {
+                $this->shipping['first_name'] = (string) $value;
+            }
+
+            public function get_shipping_last_name()
+            {
+                return (string) ($this->shipping['last_name'] ?? '');
+            }
+
+            public function set_shipping_last_name($value)
+            {
+                $this->shipping['last_name'] = (string) $value;
+            }
+
+            public function get_shipping_company()
+            {
+                return (string) ($this->shipping['company'] ?? '');
+            }
+
+            public function set_shipping_company($value)
+            {
+                $this->shipping['company'] = (string) $value;
+            }
+
+            public function get_shipping_address_1()
+            {
+                return (string) ($this->shipping['address_1'] ?? '');
+            }
+
+            public function set_shipping_address_1($value)
+            {
+                $this->shipping['address_1'] = (string) $value;
+            }
+
+            public function get_shipping_address_2()
+            {
+                return (string) ($this->shipping['address_2'] ?? '');
+            }
+
+            public function set_shipping_address_2($value)
+            {
+                $this->shipping['address_2'] = (string) $value;
+            }
+
+            public function get_shipping_city()
+            {
+                return (string) ($this->shipping['city'] ?? '');
+            }
+
+            public function set_shipping_city($value)
+            {
+                $this->shipping['city'] = (string) $value;
+            }
+
+            public function get_shipping_postcode()
+            {
+                return (string) ($this->shipping['postcode'] ?? '');
+            }
+
+            public function set_shipping_postcode($value)
+            {
+                $this->shipping['postcode'] = (string) $value;
+            }
+
+            public function get_shipping_country()
+            {
+                return (string) ($this->shipping['country'] ?? '');
+            }
+
+            public function set_shipping_country($value)
+            {
+                $this->shipping['country'] = (string) $value;
+            }
+
+            public function get_shipping_state()
+            {
+                return (string) ($this->shipping['state'] ?? '');
+            }
+
+            public function set_shipping_state($value)
+            {
+                $this->shipping['state'] = (string) $value;
+            }
+        };
+    }
+
 }

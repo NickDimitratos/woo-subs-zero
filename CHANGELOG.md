@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.10] - 2026-05-04
+
+### Added
+
+- Added subscription-specific admin lifecycle actions so admins can only trigger valid subscription status transitions.
+
+### Fixed
+
+- Hydrated thin renewal orders in place when WooCommerce Subscriptions creates an order with line items/payment context but missing customer, billing, or shipping details.
+- Copied customer, billing, and shipping context onto native fallback renewal orders.
+
+### Tests
+
+- Added regression coverage for thin Pay.nl-style renewal order hydration and subscription admin lifecycle actions.
+
 ## [0.1.9] - 2026-05-04
 
 ### Fixed
