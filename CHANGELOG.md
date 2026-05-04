@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.7] - 2026-05-04
+
+### Changed
+
+- Set `enable_manual_renewals` default to `no` for new installs so the default renewal mode is automatic (checkbox unchecked by default).
+
 ## [0.1.6] - 2026-05-04
 
 ### Added

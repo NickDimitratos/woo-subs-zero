@@ -55,7 +55,7 @@ final class WSZ_Woo_Subzero
             add_option(
                 'wsz_subs_options',
                 array(
-                    'enable_manual_renewals' => 'yes',
+                    'enable_manual_renewals' => 'no',
                     'auto_restore_automatic_renewals' => 'yes',
                     'enable_retries' => 'yes',
                     'enable_retry_emails_customer' => 'no',
