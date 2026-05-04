@@ -27,6 +27,11 @@ class WSZ_Payment_Handler
         add_action('woocommerce_subscriptions_changed_failing_payment_method', array($this, 'handle_failing_payment_method_update'), 10, 3);
         add_action('woocommerce_subscription_payment_method_updated', array($this, 'handle_subscription_payment_method_updated'), 10, 3);
         add_action('woocommerce_subscription_renewal_payment_complete', array($this, 'handle_manual_renewal_payment_complete'), 10, 2);
+
+        // Capture token/gateway metadata after checkout payment settles so renewals can charge automatically.
+        add_action('woocommerce_payment_complete', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 1);
+        add_action('woocommerce_order_status_processing', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 2);
+        add_action('woocommerce_order_status_completed', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 2);
     }
 
     /**
@@ -140,6 +145,14 @@ class WSZ_Payment_Handler
         }
 
         $token_id = $this->subscription_manager->get_payment_token_id($subscription);
+
+        if ($token_id <= 0) {
+            $token_id = $this->resolve_fallback_token_id($subscription);
+
+            if ($token_id > 0) {
+                $this->subscription_manager->set_payment_token_id($subscription, $token_id);
+            }
+        }
 
         if ($token_id <= 0) {
             return null;
@@ -300,6 +313,61 @@ class WSZ_Payment_Handler
     }
 
     /**
+     * @param WC_Order|int $order_or_id
+     * @param mixed        $order
+     */
+    public function sync_subscriptions_from_paid_parent_order($order_or_id, $order = null): void
+    {
+        if ($order_or_id instanceof WC_Order) {
+            $order = $order_or_id;
+        }
+
+        if (!($order instanceof WC_Order) && function_exists('wc_get_order')) {
+            $order = wc_get_order((int) $order_or_id);
+        }
+
+        if (!($order instanceof WC_Order)) {
+            return;
+        }
+
+        $order_type = is_callable(array($order, 'get_type'))
+            ? sanitize_key((string) $order->get_type())
+            : '';
+
+        if ('' !== $order_type && 'shop_order' !== $order_type) {
+            return;
+        }
+
+        $subscription_ids = $order->get_meta('_wsz_subscription_ids', true);
+
+        if (!is_array($subscription_ids) || empty($subscription_ids)) {
+            return;
+        }
+
+        $gateway_id = sanitize_key((string) $order->get_payment_method());
+        $token_id = $this->resolve_token_id_from_order($order);
+
+        foreach ($subscription_ids as $subscription_id) {
+            $subscription = $this->subscription_manager->get_subscription((int) $subscription_id);
+
+            if (!($subscription instanceof WC_Order)) {
+                continue;
+            }
+
+            $copied = $this->subscription_manager->copy_payment_context_meta($order, $subscription);
+
+            if ($token_id > 0 || ('' !== $gateway_id && $this->is_gateway_registered($gateway_id))) {
+                $this->update_subscription_payment_context($subscription, $token_id, $gateway_id);
+                continue;
+            }
+
+            if ($copied) {
+                $subscription->save();
+            }
+        }
+    }
+
+    /**
      * @param mixed $payment_meta
      */
     private function extract_token_id($payment_meta): int
@@ -354,6 +422,77 @@ class WSZ_Payment_Handler
         $registered = $gateways->payment_gateways();
 
         return is_array($registered) ? $registered : array();
+    }
+
+    private function resolve_fallback_token_id(WC_Order $subscription): int
+    {
+        if (!class_exists('WC_Payment_Tokens')) {
+            return 0;
+        }
+
+        $customer_id = (int) $subscription->get_customer_id();
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+
+        if ($customer_id <= 0 || '' === $gateway_id || !is_callable(array('WC_Payment_Tokens', 'get_customer_tokens'))) {
+            return 0;
+        }
+
+        $tokens = WC_Payment_Tokens::get_customer_tokens($customer_id, $gateway_id);
+
+        if (!is_array($tokens) || empty($tokens)) {
+            return 0;
+        }
+
+        $fallback_token_id = 0;
+
+        foreach ($tokens as $token) {
+            if (!($token instanceof WC_Payment_Token)) {
+                continue;
+            }
+
+            $token_id = (int) $token->get_id();
+
+            if ($token_id <= 0) {
+                continue;
+            }
+
+            if (0 === $fallback_token_id) {
+                $fallback_token_id = $token_id;
+            }
+
+            if (is_callable(array($token, 'is_default')) && $token->is_default()) {
+                return $token_id;
+            }
+        }
+
+        return $fallback_token_id;
+    }
+
+    private function resolve_token_id_from_order(WC_Order $order): int
+    {
+        $raw_token = $order->get_meta('_payment_token_id', true);
+
+        if (is_numeric($raw_token)) {
+            return max(0, (int) $raw_token);
+        }
+
+        if (is_callable(array($order, 'get_payment_tokens'))) {
+            $tokens = $order->get_payment_tokens();
+
+            if (is_array($tokens) && !empty($tokens)) {
+                $first = reset($tokens);
+
+                if (is_numeric($first)) {
+                    return max(0, (int) $first);
+                }
+
+                if ($first instanceof WC_Payment_Token) {
+                    return max(0, (int) $first->get_id());
+                }
+            }
+        }
+
+        return 0;
     }
 
     private function should_auto_restore_automatic_renewals(): bool
