@@ -91,6 +91,37 @@ if (!class_exists('WC_Order')) {
         {
         }
 
+        public function set_payment_method_title($title)
+        {
+        }
+
+        public function get_payment_method_title()
+        {
+            return '';
+        }
+
+        public function set_currency($currency)
+        {
+        }
+
+        public function get_currency()
+        {
+            return '';
+        }
+
+        public function calculate_totals($and_taxes = true)
+        {
+        }
+
+        public function add_item($item)
+        {
+        }
+
+        public function get_items($types = array())
+        {
+            return array();
+        }
+
         public function save()
         {
         }
@@ -103,6 +134,11 @@ if (!class_exists('WC_Order')) {
         public function get_meta($key, $single = true)
         {
             return '';
+        }
+
+        public function get_meta_data()
+        {
+            return array();
         }
 
         public function update_meta_data($key, $value)

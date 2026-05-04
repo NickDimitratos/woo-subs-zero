@@ -344,9 +344,18 @@ class WSZ_Renewal_Engine
         if (function_exists('wcs_create_renewal_order')) {
             $renewal_order = wcs_create_renewal_order($subscription);
             if ($renewal_order instanceof WC_Order) {
-                $renewal_order->update_meta_data('_wsz_subscription_id', $subscription->get_id());
-                $renewal_order->save();
-                return $renewal_order;
+                if (!$this->is_incomplete_wcs_renewal_order($subscription, $renewal_order)) {
+                    return $this->finalize_renewal_order($subscription, $renewal_order);
+                }
+
+                wc_get_logger()->warning(
+                    sprintf(
+                        'Discarding incomplete WCS renewal order %d for subscription %d and rebuilding natively.',
+                        (int) $renewal_order->get_id(),
+                        (int) $subscription->get_id()
+                    ),
+                    array('source' => 'woo-subzero')
+                );
             }
         }
 
@@ -377,12 +386,85 @@ class WSZ_Renewal_Engine
         $renewal_order->set_currency($subscription->get_currency());
         $renewal_order->set_total($subscription->get_total());
         $renewal_order->calculate_totals(false);
+        return $this->finalize_renewal_order($subscription, $renewal_order);
+    }
+
+    private function finalize_renewal_order(WC_Order $subscription, WC_Order $renewal_order): ?WC_Order
+    {
+        $subscription_payment_method = sanitize_key((string) $subscription->get_payment_method());
+        $renewal_payment_method = sanitize_key((string) $renewal_order->get_payment_method());
+
+        if ('' === $renewal_payment_method && '' !== $subscription_payment_method) {
+            $renewal_order->set_payment_method($subscription_payment_method);
+            $renewal_order->set_payment_method_title($subscription->get_payment_method_title());
+        }
+
+        if ('' === (string) $renewal_order->get_currency()) {
+            $renewal_order->set_currency($subscription->get_currency());
+        }
+
+        $this->copy_payment_context_to_renewal($subscription, $renewal_order);
+
         $renewal_order->update_meta_data('_wsz_subscription_id', $subscription->get_id());
         $renewal_order->save();
 
-        $this->subscription_manager->add_related_order($subscription, $renewal_order->get_id(), 'renewal');
+        $this->subscription_manager->add_related_order($subscription, (int) $renewal_order->get_id(), 'renewal');
 
         return $renewal_order;
+    }
+
+    private function copy_payment_context_to_renewal(WC_Order $subscription, WC_Order $renewal_order): void
+    {
+        $this->subscription_manager->copy_payment_context_meta($subscription, $renewal_order);
+
+        $parent_order = $this->resolve_parent_order_for_payment_context($subscription);
+        if (!($parent_order instanceof WC_Order)) {
+            return;
+        }
+
+        if ($this->subscription_manager->copy_payment_context_meta($parent_order, $subscription)) {
+            $subscription->save();
+        }
+
+        $this->subscription_manager->copy_payment_context_meta($parent_order, $renewal_order);
+    }
+
+    private function resolve_parent_order_for_payment_context(WC_Order $subscription): ?WC_Order
+    {
+        $parent_order_id = (int) $subscription->get_meta('_wsz_parent_order_id', true);
+
+        if ($parent_order_id <= 0 && is_callable(array($subscription, 'get_parent_id'))) {
+            $parent_order_id = (int) $subscription->get_parent_id();
+        }
+
+        if ($parent_order_id <= 0 || !function_exists('wc_get_order')) {
+            return null;
+        }
+
+        $parent_order = wc_get_order($parent_order_id);
+
+        return $parent_order instanceof WC_Order ? $parent_order : null;
+    }
+
+    private function is_incomplete_wcs_renewal_order(WC_Order $subscription, WC_Order $renewal_order): bool
+    {
+        $subscription_items = $subscription->get_items(array('line_item'));
+        $renewal_items = $renewal_order->get_items(array('line_item'));
+
+        if (!is_array($subscription_items) || !is_array($renewal_items)) {
+            return false;
+        }
+
+        if (count($subscription_items) > 0 && count($renewal_items) <= 0) {
+            $subscription_total = (float) $subscription->get_total();
+            $renewal_total = (float) $renewal_order->get_total();
+
+            if ($subscription_total > 0 && $renewal_total <= 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function advance_next_payment_and_schedule(WC_Order $subscription): void

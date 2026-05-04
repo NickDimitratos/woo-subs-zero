@@ -8,6 +8,12 @@ require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-test-card-gat
 
 final class ManualRenewalDispatchTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $GLOBALS['wsz_wc_test_container'] = null;
+    }
+
     public function test_dispatch_scheduled_payment_marks_order_pending_when_manual_renewal_enabled(): void
     {
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -60,5 +66,83 @@ final class ManualRenewalDispatchTest extends TestCase
             ->method('set_manual_renewal');
 
         $handler->dispatch_scheduled_payment($subscription, $renewal_order, 29.99);
+    }
+
+    public function test_dispatch_scheduled_payment_does_not_fallback_to_manual_for_registered_gateway(): void
+    {
+        $GLOBALS['wsz_wc_test_container'] = new ManualRenewalDispatchWooContainer(
+            new ManualRenewalDispatchGatewayLoader(
+                array(
+                    'stripe' => (object) array('enabled' => 'no'),
+                ),
+                array()
+            )
+        );
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->expects($this->once())
+            ->method('get_payment_method')
+            ->willReturn('stripe');
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_order
+            ->expects($this->never())
+            ->method('update_status');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('is_manual_renewal')
+            ->with($subscription)
+            ->willReturn(false);
+
+        $subscription_manager
+            ->expects($this->never())
+            ->method('set_manual_renewal');
+
+        $handler->dispatch_scheduled_payment($subscription, $renewal_order, 29.99);
+    }
+}
+
+final class ManualRenewalDispatchWooContainer
+{
+    public $payment_gateways = true;
+
+    private $gateway_loader;
+
+    public function __construct($gateway_loader)
+    {
+        $this->gateway_loader = $gateway_loader;
+    }
+
+    public function payment_gateways()
+    {
+        return $this->gateway_loader;
+    }
+}
+
+final class ManualRenewalDispatchGatewayLoader
+{
+    private $registered;
+
+    private $available;
+
+    public function __construct(array $registered, array $available)
+    {
+        $this->registered = $registered;
+        $this->available = $available;
+    }
+
+    public function payment_gateways(): array
+    {
+        return $this->registered;
+    }
+
+    public function get_available_payment_gateways(): array
+    {
+        return $this->available;
     }
 }

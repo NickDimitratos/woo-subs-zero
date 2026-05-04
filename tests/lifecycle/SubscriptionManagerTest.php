@@ -504,4 +504,43 @@ final class SubscriptionManagerTest extends TestCase
 
         $manager->activate_deferred_subscription(1202);
     }
+
+    public function test_copy_payment_context_meta_copies_gateway_keys_only(): void
+    {
+        $manager = new WSZ_Subscription_Manager();
+
+        $source = $this->createMock(WC_Order::class);
+        $source
+            ->method('get_meta_data')
+            ->willReturn(
+                array(
+                    array('key' => 'customerkey', 'value' => 'cust_123'),
+                    array('key' => '_payment_token_id', 'value' => '456'),
+                    array('key' => '_transaction_id', 'value' => 'tx_789'),
+                    array('key' => '_wsz_next_schedule_key', 'value' => 'internal'),
+                    array('key' => '_order_total', 'value' => '99.00'),
+                )
+            );
+
+        $copied = array();
+        $target = $this->createMock(WC_Order::class);
+        $target
+            ->expects($this->exactly(3))
+            ->method('update_meta_data')
+            ->willReturnCallback(
+                static function ($key, $value) use (&$copied): void {
+                    $copied[(string) $key] = $value;
+                }
+            );
+
+        $this->assertTrue($manager->copy_payment_context_meta($source, $target));
+        $this->assertSame(
+            array(
+                'customerkey' => 'cust_123',
+                '_payment_token_id' => '456',
+                '_transaction_id' => 'tx_789',
+            ),
+            $copied
+        );
+    }
 }

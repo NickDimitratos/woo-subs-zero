@@ -1471,6 +1471,7 @@ class WSZ_Subscription_Manager
         $subscription->set_prices_include_tax($order->get_prices_include_tax());
         $subscription->set_payment_method($order->get_payment_method());
         $subscription->set_payment_method_title($order->get_payment_method_title());
+        $this->copy_payment_context_meta($order, $subscription);
         $subscription->set_billing_first_name($order->get_billing_first_name());
         $subscription->set_billing_last_name($order->get_billing_last_name());
         $subscription->set_billing_company($order->get_billing_company());
@@ -1495,6 +1496,130 @@ class WSZ_Subscription_Manager
 
         $subscription->set_total($order->get_total());
         $subscription->calculate_totals(false);
+    }
+
+    public function copy_payment_context_meta(WC_Order $source, WC_Order $target): bool
+    {
+        if (!is_callable(array($source, 'get_meta_data')) || !is_callable(array($target, 'update_meta_data'))) {
+            return false;
+        }
+
+        $copied = false;
+        $meta_rows = $source->get_meta_data();
+
+        if (!is_array($meta_rows)) {
+            return false;
+        }
+
+        foreach ($meta_rows as $meta_row) {
+            $key = $this->get_meta_row_key($meta_row);
+
+            if (!$this->is_payment_context_meta_key($key, $source, $target)) {
+                continue;
+            }
+
+            $target->update_meta_data($key, $this->get_meta_row_value($meta_row));
+            $copied = true;
+        }
+
+        return $copied;
+    }
+
+    private function get_meta_row_key($meta_row): string
+    {
+        if (is_object($meta_row) && is_callable(array($meta_row, 'get_key'))) {
+            return (string) $meta_row->get_key();
+        }
+
+        if (is_object($meta_row) && is_callable(array($meta_row, 'get_data'))) {
+            $data = $meta_row->get_data();
+            return is_array($data) ? (string) ($data['key'] ?? '') : '';
+        }
+
+        if (is_array($meta_row)) {
+            return (string) ($meta_row['key'] ?? $meta_row['meta_key'] ?? '');
+        }
+
+        return '';
+    }
+
+    private function get_meta_row_value($meta_row)
+    {
+        if (is_object($meta_row) && is_callable(array($meta_row, 'get_value'))) {
+            return $meta_row->get_value();
+        }
+
+        if (is_object($meta_row) && is_callable(array($meta_row, 'get_data'))) {
+            $data = $meta_row->get_data();
+            return is_array($data) ? ($data['value'] ?? '') : '';
+        }
+
+        if (is_array($meta_row)) {
+            return $meta_row['value'] ?? $meta_row['meta_value'] ?? '';
+        }
+
+        return '';
+    }
+
+    private function is_payment_context_meta_key(string $key, WC_Order $source, WC_Order $target): bool
+    {
+        $key = trim($key);
+
+        if ('' === $key) {
+            return false;
+        }
+
+        $copy_keys = apply_filters(
+            'wsz_subs_payment_context_meta_keys',
+            array(
+                '_payment_token_id',
+                '_payment_method',
+                '_payment_method_title',
+                '_transaction_id',
+            ),
+            $source,
+            $target
+        );
+
+        if (is_array($copy_keys) && in_array($key, array_map('strval', $copy_keys), true)) {
+            return true;
+        }
+
+        if (0 === strpos($key, '_wsz_')) {
+            return false;
+        }
+
+        $normalized_key = strtolower($key);
+        $patterns = apply_filters(
+            'wsz_subs_payment_context_meta_key_patterns',
+            array(
+                'payment',
+                'transaction',
+                'token',
+                'customerkey',
+                'customer_key',
+                'recurring',
+                'mandate',
+                'alias',
+                'card',
+            ),
+            $source,
+            $target
+        );
+
+        if (!is_array($patterns)) {
+            return false;
+        }
+
+        foreach ($patterns as $pattern) {
+            $pattern = strtolower((string) $pattern);
+
+            if ('' !== $pattern && false !== strpos($normalized_key, $pattern)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function get_options(): array
