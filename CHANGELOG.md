@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.8] - 2026-05-04
+
+### Fixed
+
+- Fixed incomplete renewal orders by rebuilding empty WCS renewal shells with subscription items, totals, currency, and payment method context.
+- Fixed automatic renewal dispatch so registered gateways are not switched to manual renewal because of stale runtime availability checks.
+- Copied gateway payment context metadata from parent orders/subscriptions into renewal orders so recurring gateway handlers receive the required customer/token/transaction references.
+
+### Tests
+
+- Added regressions for renewal order hydration, payment context metadata copying, and registered-gateway auto-renewal dispatch.
+
 ## [0.1.7] - 2026-05-04
 
 ### Changed
