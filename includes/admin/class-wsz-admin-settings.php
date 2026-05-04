@@ -57,6 +57,7 @@ class WSZ_Admin_Settings
 
         $feature_fields = array(
             'enable_manual_renewals' => __('Enable manual renewals', 'woo-subzero'),
+            'auto_restore_automatic_renewals' => __('Auto-restore automatic renewals after successful recovery', 'woo-subzero'),
             'enable_retries' => __('Enable automatic retry rules', 'woo-subzero'),
             'enable_retry_emails_customer' => __('Enable retry emails to customers', 'woo-subzero'),
             'enable_retry_emails_admin' => __('Enable retry emails to store owner', 'woo-subzero'),
@@ -286,6 +287,7 @@ class WSZ_Admin_Settings
 
         $output = array(
             'enable_manual_renewals' => $this->sanitize_yes_no($input['enable_manual_renewals'] ?? $defaults['enable_manual_renewals']),
+            'auto_restore_automatic_renewals' => $this->sanitize_yes_no($input['auto_restore_automatic_renewals'] ?? $defaults['auto_restore_automatic_renewals']),
             'enable_retries' => $this->sanitize_yes_no($input['enable_retries'] ?? $defaults['enable_retries']),
             'enable_retry_emails_customer' => $this->sanitize_yes_no($input['enable_retry_emails_customer'] ?? $defaults['enable_retry_emails_customer']),
             'enable_retry_emails_admin' => $this->sanitize_yes_no($input['enable_retry_emails_admin'] ?? $defaults['enable_retry_emails_admin']),
@@ -444,6 +446,7 @@ class WSZ_Admin_Settings
     {
         $descriptions = array(
             'enable_manual_renewals' => __('Allows renewal orders to remain payable manually when auto-charge is not preferred or unavailable.', 'woo-subzero'),
+            'auto_restore_automatic_renewals' => __('When a customer successfully updates payment context or pays a manual renewal, switch the subscription back to automatic renewal.', 'woo-subzero'),
             'enable_retries' => __('Queues failed automatic renewal payments for retry using the configured retry policy.', 'woo-subzero'),
             'enable_retry_emails_customer' => __('Sends customers retry-related notifications after failed renewal payments.', 'woo-subzero'),
             'enable_retry_emails_admin' => __('Sends retry-related notifications to the store owner.', 'woo-subzero'),
@@ -600,6 +603,7 @@ class WSZ_Admin_Settings
     {
         return array(
             'enable_manual_renewals' => 'yes',
+            'auto_restore_automatic_renewals' => 'yes',
             'enable_retries' => 'yes',
             'enable_retry_emails_customer' => 'no',
             'enable_retry_emails_admin' => 'no',
