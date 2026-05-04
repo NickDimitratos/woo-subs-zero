@@ -32,6 +32,7 @@ final class CheckoutHandlerVariableProductDetectionTest extends TestCase
     protected function tearDown(): void
     {
         unset($GLOBALS['wsz_checkout_test_products']);
+        unset($GLOBALS['wsz_wc_test_container']);
 
         parent::tearDown();
     }
@@ -835,6 +836,108 @@ final class CheckoutHandlerVariableProductDetectionTest extends TestCase
         );
 
         $handler->maybe_create_subscriptions_for_paid_status($order);
+    }
+
+    public function test_subscription_cart_forces_checkout_account_creation(): void
+    {
+        $handler = new WSZ_Checkout_Handler($this->createMock(WSZ_Subscription_Manager::class));
+        $product = new CheckoutHandlerDummyProduct(
+            980,
+            'wsz_subscription',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+
+        $GLOBALS['wsz_wc_test_container'] = (object) array(
+            'cart' => new CheckoutHandlerDummyCart(
+                array(
+                    array(
+                        'product_id' => 980,
+                        'data' => $product,
+                    ),
+                )
+            ),
+        );
+
+        $this->assertTrue($handler->require_registration_for_subscription_checkout(false));
+        $this->assertTrue($handler->enable_registration_for_subscription_checkout(false));
+        $this->assertTrue($handler->force_create_account_checked_for_subscription_checkout(false));
+        $this->assertSame(array('billing_email' => 'nikos@example.com', 'createaccount' => 1), $handler->force_create_account_in_posted_data(array('billing_email' => 'nikos@example.com')));
+    }
+
+    public function test_non_subscription_cart_preserves_checkout_account_settings(): void
+    {
+        $handler = new WSZ_Checkout_Handler($this->createMock(WSZ_Subscription_Manager::class));
+        $product = new CheckoutHandlerDummyProduct(981, 'simple');
+
+        $GLOBALS['wsz_wc_test_container'] = (object) array(
+            'cart' => new CheckoutHandlerDummyCart(
+                array(
+                    array(
+                        'product_id' => 981,
+                        'data' => $product,
+                    ),
+                )
+            ),
+        );
+
+        $this->assertFalse($handler->require_registration_for_subscription_checkout(false));
+        $this->assertFalse($handler->enable_registration_for_subscription_checkout(false));
+        $this->assertFalse($handler->force_create_account_checked_for_subscription_checkout(false));
+        $this->assertSame(array('billing_email' => 'guest@example.com'), $handler->force_create_account_in_posted_data(array('billing_email' => 'guest@example.com')));
+    }
+
+    public function test_subscription_checkout_validation_rejects_guest_bypass_without_create_account(): void
+    {
+        $handler = new WSZ_Checkout_Handler($this->createMock(WSZ_Subscription_Manager::class));
+        $product = new CheckoutHandlerDummyProduct(
+            982,
+            'simple',
+            array('_wsz_subscription_enabled' => 'yes')
+        );
+        $errors = new CheckoutHandlerDummyErrors();
+
+        $GLOBALS['wsz_wc_test_container'] = (object) array(
+            'cart' => new CheckoutHandlerDummyCart(
+                array(
+                    array(
+                        'product_id' => 982,
+                        'data' => $product,
+                    ),
+                )
+            ),
+        );
+
+        $handler->validate_subscription_account_checkout(array('billing_email' => 'guest@example.com'), $errors);
+
+        $this->assertSame(
+            array('wsz_subs_account_required' => 'An account is required when buying a subscription so automatic renewals can store reusable payment context.'),
+            $errors->messages
+        );
+    }
+}
+
+final class CheckoutHandlerDummyCart
+{
+    private array $items;
+
+    public function __construct(array $items)
+    {
+        $this->items = $items;
+    }
+
+    public function get_cart(): array
+    {
+        return $this->items;
+    }
+}
+
+final class CheckoutHandlerDummyErrors
+{
+    public array $messages = array();
+
+    public function add(string $code, string $message): void
+    {
+        $this->messages[$code] = $message;
     }
 }
 
