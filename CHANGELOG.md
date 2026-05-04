@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.9] - 2026-05-04
+
+### Fixed
+
+- Hydrated incomplete WCS renewal orders in place so the visible renewal order keeps its items, totals, currency, payment method, and subscription link.
+- Treated renewal orders with missing line items as incomplete even when gateway payment metadata is present.
+
+### Tests
+
+- Added regression coverage for in-place renewal order hydration.
+
 ## [0.1.8] - 2026-05-04
 
 ### Fixed
