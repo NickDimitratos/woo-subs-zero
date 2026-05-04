@@ -121,7 +121,9 @@ jobs:
           name: ${{ steps.package.outputs.zip_name }}
           path: ${{ steps.package.outputs.zip_path }}
 
-      - name: Create GitHub release and attach ZIP
+      - name: Create GitHub release and attach ZIP (attempt 1)
+        id: create_release_attempt_1
+        continue-on-error: true
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -130,3 +132,26 @@ jobs:
           artifacts: ${{ steps.package.outputs.zip_path }}
           generateReleaseNotes: true
           artifactErrorsFailBuild: true
+
+      - name: Pause before release retry
+        if: ${{ steps.create_release_attempt_1.outcome == 'failure' }}
+        run: sleep 10
+
+      - name: Create GitHub release and attach ZIP (attempt 2)
+        id: create_release_attempt_2
+        if: ${{ steps.create_release_attempt_1.outcome == 'failure' }}
+        continue-on-error: true
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.version.outputs.tag }}
+          name: Woo Subs-Zero v${{ steps.version.outputs.version }}
+          artifacts: ${{ steps.package.outputs.zip_path }}
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true
+
+      - name: Fail if release could not be created after retry
+        if: ${{ steps.create_release_attempt_1.outcome == 'failure' && steps.create_release_attempt_2.outcome == 'failure' }}
+        run: |
+          echo "Release creation failed on both attempts."
+          exit 1
