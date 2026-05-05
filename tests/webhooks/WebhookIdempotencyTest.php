@@ -3,6 +3,8 @@
 use PHPUnit\Framework\TestCase;
 
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
+require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-payment-token.php';
+require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-gateway.php';
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-webhook-handler.php';
 
 final class WebhookIdempotencyTest extends TestCase
@@ -71,5 +73,82 @@ final class WebhookIdempotencyTest extends TestCase
                 array('order_key' => 'wc_order_abc')
             )
         );
+    }
+
+    public function test_paynl_token_exchange_payload_is_detected(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Webhook_Handler($subscription_manager);
+
+        $method = new ReflectionMethod(WSZ_Webhook_Handler::class, 'is_token_exchange_payload');
+        $method->setAccessible(true);
+
+        $this->assertTrue(
+            $method->invoke(
+                $handler,
+                array(
+                    'action' => 'token',
+                    'recurring_id' => 'VY-9212-9171-2390',
+                )
+            )
+        );
+    }
+
+    public function test_paynl_token_exchange_stores_payment_token_on_order_and_subscription(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Webhook_Handler($subscription_manager);
+
+        $order = $this->createMock(WC_Order::class);
+        $order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $order->method('get_customer_id')->willReturn(8);
+        $order
+            ->method('get_meta')
+            ->with('_wsz_subscription_ids', true)
+            ->willReturn(array(10473));
+
+        $order
+            ->expects($this->once())
+            ->method('update_meta_data')
+            ->with('_payment_token_id', $this->greaterThan(0));
+
+        $order
+            ->expects($this->once())
+            ->method('save');
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->expects($this->once())
+            ->method('set_payment_method')
+            ->with(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $subscription
+            ->expects($this->once())
+            ->method('save');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(10473)
+            ->willReturn($subscription);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_payment_token_id')
+            ->with($subscription, $this->greaterThan(0));
+
+        $method = new ReflectionMethod(WSZ_Webhook_Handler::class, 'store_recurring_payment_token');
+        $method->setAccessible(true);
+
+        $token_id = $method->invoke(
+            $handler,
+            $order,
+            array(
+                'action' => 'token',
+                'recurring_id' => 'VY-9212-9171-2390',
+                'transactionid' => 'EX-2345-2238-9812',
+            )
+        );
+
+        $this->assertGreaterThan(0, $token_id);
     }
 }

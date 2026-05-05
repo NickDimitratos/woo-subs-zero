@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.22] - 2026-05-05
+
+### Added
+
+- Added a PAY.nl recurring bridge for the `pay_gateway_creditcardsgrouped` gateway so scheduled renewals register a tokenized payment handler.
+- Added PAY.nl token-exchange handling that stores `recurring_id` values as WooCommerce payment tokens and syncs the token ID back to linked subscriptions.
+- Added a PAY.nl recurring authorization callback using merchant-initiated token payments, with credential and payload filters for live gateway configuration.
+
+### Tests
+
+- Added PAY.nl gateway and token-exchange regression coverage.
+
 ## [0.1.21] - 2026-05-05
 
 ### Changed

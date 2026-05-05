@@ -26,6 +26,27 @@ if (!function_exists('do_action')) {
     }
 }
 
+if (!function_exists('absint')) {
+    function absint($value)
+    {
+        return abs((int) $value);
+    }
+}
+
+if (!function_exists('wp_unslash')) {
+    function wp_unslash($value)
+    {
+        return $value;
+    }
+}
+
+if (!function_exists('wp_json_encode')) {
+    function wp_json_encode($data, $options = 0, $depth = 512)
+    {
+        return json_encode($data, $options, $depth);
+    }
+}
+
 if (!function_exists('sanitize_key')) {
     function sanitize_key($key)
     {
@@ -210,6 +231,101 @@ if (!class_exists('WC_Order')) {
         public function get_type()
         {
             return 'shop_order';
+        }
+    }
+}
+
+if (!class_exists('WC_Payment_Token')) {
+    class WC_Payment_Token
+    {
+        private int $id = 0;
+
+        private string $token = '';
+
+        private string $gateway_id = '';
+
+        private int $user_id = 0;
+
+        private static int $next_id = 1000;
+
+        public function get_id()
+        {
+            return $this->id;
+        }
+
+        public function get_token($context = 'view')
+        {
+            return $this->token;
+        }
+
+        public function set_token($token)
+        {
+            $this->token = (string) $token;
+        }
+
+        public function get_gateway_id($context = 'view')
+        {
+            return $this->gateway_id;
+        }
+
+        public function set_gateway_id($gateway_id)
+        {
+            $this->gateway_id = (string) $gateway_id;
+        }
+
+        public function get_user_id($context = 'view')
+        {
+            return $this->user_id;
+        }
+
+        public function set_user_id($user_id)
+        {
+            $this->user_id = (int) $user_id;
+        }
+
+        public function is_default()
+        {
+            return false;
+        }
+
+        public function save()
+        {
+            if ($this->id <= 0) {
+                $this->id = self::$next_id++;
+            }
+
+            return $this->id;
+        }
+    }
+}
+
+if (!class_exists('WC_Payment_Tokens')) {
+    class WC_Payment_Tokens
+    {
+        private static array $tokens = array();
+
+        private static array $customer_tokens = array();
+
+        public static function reset_test_tokens(): void
+        {
+            self::$tokens = array();
+            self::$customer_tokens = array();
+        }
+
+        public static function set_test_tokens(array $tokens, array $customer_tokens = array()): void
+        {
+            self::$tokens = $tokens;
+            self::$customer_tokens = $customer_tokens;
+        }
+
+        public static function get($token_id)
+        {
+            return self::$tokens[(int) $token_id] ?? null;
+        }
+
+        public static function get_customer_tokens($customer_id, $gateway_id = '')
+        {
+            return self::$customer_tokens[(int) $customer_id . '|' . (string) $gateway_id] ?? array();
         }
     }
 }
