@@ -131,7 +131,7 @@ final class WebhookIdempotencyTest extends TestCase
             ->willReturn(array(10473));
 
         $order
-            ->expects($this->exactly(4))
+            ->expects($this->exactly(5))
             ->method('update_meta_data')
             ->willReturnCallback(
                 static function ($key, $value) use (&$order_meta): void {
@@ -186,5 +186,6 @@ final class WebhookIdempotencyTest extends TestCase
         $this->assertSame('VY-9212-9171-2390', $order_meta['_wsz_paynl_recurring_id'] ?? '');
         $this->assertSame('recurring_id', $order_meta['_wsz_paynl_recurring_source'] ?? '');
         $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
+        $this->assertSame('no', $order_meta['_wsz_paynl_recurring_missing_logged'] ?? '');
     }
 }

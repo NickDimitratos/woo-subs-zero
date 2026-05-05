@@ -121,6 +121,30 @@ if (!function_exists('wc_get_logger')) {
     }
 }
 
+if (!function_exists('is_email')) {
+    function is_email($email)
+    {
+        return false !== strpos((string) $email, '@');
+    }
+}
+
+if (!function_exists('wp_mail')) {
+    function wp_mail($to, $subject, $message, $headers = '', $attachments = array())
+    {
+        if (!empty($GLOBALS['wsz_retry_test_wp_mail_throws'])) {
+            throw new ValueError('Unknown format specifier ","');
+        }
+
+        $GLOBALS['wsz_retry_test_mail'][] = array(
+            'to' => $to,
+            'subject' => $subject,
+            'message' => $message,
+        );
+
+        return true;
+    }
+}
+
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
 require_once dirname(__DIR__, 2) . '/includes/admin/class-wsz-admin-settings.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/class-wsz-payment-handler.php';
@@ -154,6 +178,8 @@ final class RetryManagerTest extends TestCase
         unset($GLOBALS['wsz_subs_test_orders']);
         unset($GLOBALS['wsz_test_card_orders']);
         unset($GLOBALS['wsz_admin_test_options']);
+        unset($GLOBALS['wsz_retry_test_mail']);
+        unset($GLOBALS['wsz_retry_test_wp_mail_throws']);
 
         parent::tearDown();
     }
@@ -263,6 +289,37 @@ final class RetryManagerTest extends TestCase
         $this->assertTrue($scheduled_actions[0]['unique']);
         $this->assertSame('Retry payment queued.', $diagnostic_logs[0]['message']);
         $this->assertSame('20', $diagnostic_logs[0]['context']['renewal_order_id']);
+    }
+
+    public function test_queue_retry_does_not_throw_when_retry_notification_fails(): void
+    {
+        $GLOBALS['wsz_subs_test_options'] = array(
+            'enable_retries' => 'yes',
+            'enable_retry_emails_customer' => 'yes',
+        );
+        $GLOBALS['wsz_retry_test_wp_mail_throws'] = true;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('transition_status');
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+
+        $retry_manager = new WSZ_Retry_Manager($subscription_manager, $payment_handler);
+        $subscription = new RetryManagerDummyOrder(10, 'active');
+        $renewal_order = new RetryManagerDummyOrder(20, 'failed', array(), true);
+
+        $this->assertTrue($retry_manager->queue_retry($subscription, $renewal_order, 'renewal_failed'));
+
+        $diagnostic_logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+        $messages = array_column($diagnostic_logs, 'message');
+
+        $this->assertContains('Retry payment queued.', $messages);
+        $this->assertContains('Retry notification failed.', $messages);
+        $this->assertCount(1, $this->getScheduledActions());
     }
 
     public function test_queue_retry_schedules_one_minute_attempt_and_logs_test_mode_context(): void

@@ -402,6 +402,10 @@ class WSZ_Payment_Handler
             $token_id = $this->recover_paynl_token_id_from_order_meta($order);
         }
 
+        if ($token_id <= 0) {
+            $this->maybe_log_missing_paynl_recurring_context($order, array_map('absint', $subscription_ids), $gateway_id);
+        }
+
         foreach ($subscription_ids as $subscription_id) {
             $subscription = $this->subscription_manager->get_subscription((int) $subscription_id);
 
@@ -454,6 +458,10 @@ class WSZ_Payment_Handler
 
         if ($token_id <= 0) {
             $token_id = $this->recover_paynl_token_id_from_order_meta($parent_order);
+        }
+
+        if ($token_id <= 0) {
+            $this->maybe_log_missing_paynl_recurring_context($parent_order, array($subscription->get_id()), $gateway_id);
         }
 
         if ($token_id <= 0 && '' !== $gateway_id) {
@@ -913,6 +921,122 @@ class WSZ_Payment_Handler
         }
 
         return $this->paynl_gateway->store_recurring_payment_token_from_order_meta($order);
+    }
+
+    /**
+     * @param array<int,int> $subscription_ids
+     */
+    private function maybe_log_missing_paynl_recurring_context(WC_Order $order, array $subscription_ids, string $gateway_id): void
+    {
+        $gateway_id = sanitize_key($gateway_id);
+
+        if (!$this->is_paynl_gateway_id($gateway_id) || !$this->are_paynl_tokens_enabled()) {
+            return;
+        }
+
+        if ('yes' === (string) $order->get_meta('_wsz_paynl_recurring_missing_logged', true)) {
+            return;
+        }
+
+        $context = array(
+            'parent_order_id' => $order->get_id(),
+            'parent_order_payment_method' => $gateway_id,
+            'parent_order_payment_method_title' => (string) $order->get_payment_method_title(),
+            'subscription_ids' => array_values(array_unique(array_filter(array_map('absint', $subscription_ids)))),
+            'parent_order_token_meta' => $order->get_meta('_payment_token_id', true),
+            'paynl_tokens_enabled' => 'yes',
+        ) + $this->summarize_order_payment_tokens($order);
+
+        if (
+            class_exists('WSZ_PayNL_Token_Support')
+            && is_callable(array('WSZ_PayNL_Token_Support', 'extract_recurring_id_meta_source_key'))
+        ) {
+            $source_key = WSZ_PayNL_Token_Support::extract_recurring_id_meta_source_key($order);
+            $context['parent_order_has_paynl_recurring_meta'] = '' !== $source_key ? 'yes' : 'no';
+
+            if ('' !== $source_key) {
+                $context['parent_order_paynl_recurring_meta_source_key'] = $source_key;
+            }
+        }
+
+        try {
+            $order->update_meta_data('_wsz_paynl_recurring_missing_logged', 'yes');
+            $order->save();
+        } catch (Throwable $throwable) {
+            $context['missing_log_dedupe_failed'] = $throwable->getMessage();
+        }
+
+        $this->log_diagnostic(
+            'warning',
+            __('PAY.nl recurring token is not available on the paid parent order.', 'woo-subzero'),
+            $context
+        );
+    }
+
+    private function summarize_order_payment_tokens(WC_Order $order): array
+    {
+        if (!is_callable(array($order, 'get_payment_tokens'))) {
+            return array();
+        }
+
+        $tokens = $order->get_payment_tokens();
+        $tokens = is_array($tokens) ? $tokens : array();
+        $token_ids = array();
+        $token_classes = array();
+
+        foreach ($tokens as $token) {
+            if (is_numeric($token)) {
+                $token_ids[] = max(0, (int) $token);
+                continue;
+            }
+
+            if ($token instanceof WC_Payment_Token) {
+                $token_ids[] = max(0, (int) $token->get_id());
+                $token_classes[] = get_class($token);
+            }
+        }
+
+        return array(
+            'parent_order_payment_token_count' => count($tokens),
+            'parent_order_payment_token_ids' => array_values(array_filter(array_unique($token_ids))),
+            'parent_order_payment_token_classes' => array_values(array_unique($token_classes)),
+        );
+    }
+
+    private function is_paynl_gateway_id(string $gateway_id): bool
+    {
+        if ('' === $gateway_id || !class_exists('WSZ_PayNL_Gateway_Integration')) {
+            return false;
+        }
+
+        $gateway_ids = array(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        if (function_exists('apply_filters')) {
+            $filtered = apply_filters('wsz_subs_paynl_gateway_ids', $gateway_ids);
+            if (is_array($filtered)) {
+                $gateway_ids = $filtered;
+            }
+        }
+
+        foreach ($gateway_ids as $paynl_gateway_id) {
+            if ($gateway_id === sanitize_key((string) $paynl_gateway_id)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function are_paynl_tokens_enabled(): bool
+    {
+        if (!function_exists('get_option')) {
+            return false;
+        }
+
+        $options = get_option('wsz_subs_options', array());
+
+        return is_array($options)
+            && 'yes' === sanitize_key((string) ($options['enable_paynl_tokens'] ?? 'no'));
     }
 
     private function should_auto_restore_automatic_renewals(): bool

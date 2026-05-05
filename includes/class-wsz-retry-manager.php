@@ -131,20 +131,7 @@ class WSZ_Retry_Manager
             );
         }
 
-        try {
-            if ('active' === $subscription->get_status()) {
-                $this->subscription_manager->transition_status(
-                    $subscription,
-                    'on-hold',
-                    __('Renewal payment failed. Retry queued.', 'woo-subzero')
-                );
-            }
-        } catch (Throwable $throwable) {
-            wc_get_logger()->warning(
-                $throwable->getMessage(),
-                array('source' => 'woo-subzero')
-            );
-        }
+        $this->safe_transition_subscription_status($subscription, $renewal_order, $next_attempt);
 
         if (function_exists('as_schedule_single_action')) {
             as_schedule_single_action(
@@ -174,9 +161,9 @@ class WSZ_Retry_Manager
             )
         );
 
-        do_action('wsz_subs_retry_queued', $subscription, $renewal_order, $next_attempt, $scheduled_at);
+        $this->safe_do_retry_queued($subscription, $renewal_order, $next_attempt, $scheduled_at);
 
-        $this->maybe_send_retry_email($subscription, $renewal_order, $next_attempt, 'queued');
+        $this->safe_send_retry_email($subscription, $renewal_order, $next_attempt, 'queued');
 
         return true;
     }
@@ -403,21 +390,22 @@ class WSZ_Retry_Manager
 
         $options = $this->get_options();
 
-        $subject = sprintf(
-            __('Subscription retry update (attempt %1$d, event: %2$s)', 'woo-subzero'),
-            $attempt,
-            $event
+        $subject = strtr(
+            __('Subscription retry update (attempt {attempt}, event: {event})', 'woo-subzero'),
+            array(
+                '{attempt}' => (string) $attempt,
+                '{event}' => sanitize_key($event),
+            )
         );
 
-        $message = sprintf(
-            __(
-                "Subscription #%1$d, renewal order #%2$d, retry attempt %3$d has event '%4$s'.",
-                'woo-subzero'
-            ),
-            $subscription->get_id(),
-            $renewal_order->get_id(),
-            $attempt,
-            $event
+        $message = strtr(
+            __('Subscription #{subscription_id}, renewal order #{renewal_order_id}, retry attempt {attempt} has event "{event}".', 'woo-subzero'),
+            array(
+                '{subscription_id}' => (string) $subscription->get_id(),
+                '{renewal_order_id}' => (string) $renewal_order->get_id(),
+                '{attempt}' => (string) $attempt,
+                '{event}' => sanitize_key($event),
+            )
         );
 
         if ('yes' === $options['enable_retry_emails_customer']) {
@@ -478,19 +466,94 @@ class WSZ_Retry_Manager
             $context
         );
 
-        if (class_exists('WSZ_Admin_Settings')) {
-            WSZ_Admin_Settings::log_diagnostic($level, $message, $context);
+        try {
+            if (class_exists('WSZ_Admin_Settings')) {
+                WSZ_Admin_Settings::log_diagnostic($level, $message, $context);
+            }
+        } catch (Throwable $throwable) {
+            // Diagnostic logging must not break renewal retries.
         }
 
         if (!function_exists('wc_get_logger')) {
             return;
         }
 
-        $logger = wc_get_logger();
-        $level = sanitize_key($level);
+        try {
+            $logger = wc_get_logger();
+            $level = sanitize_key($level);
 
-        if (is_object($logger) && is_callable(array($logger, $level))) {
-            $logger->{$level}($message, $context);
+            if (is_object($logger) && is_callable(array($logger, $level))) {
+                $logger->{$level}($message, $context);
+            }
+        } catch (Throwable $throwable) {
+            // WooCommerce logger failures are non-critical for retry state.
+        }
+    }
+
+    private function safe_transition_subscription_status(WC_Order $subscription, WC_Order $renewal_order, int $attempt): void
+    {
+        try {
+            if ('active' !== $subscription->get_status()) {
+                return;
+            }
+
+            $this->subscription_manager->transition_status(
+                $subscription,
+                'on-hold',
+                __('Renewal payment failed. Retry queued.', 'woo-subzero')
+            );
+        } catch (Throwable $throwable) {
+            $this->log_retry_event(
+                'warning',
+                __('Retry subscription status update failed.', 'woo-subzero'),
+                $subscription,
+                $renewal_order,
+                $attempt,
+                array(
+                    'target_status' => 'on-hold',
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
+        }
+    }
+
+    private function safe_do_retry_queued(WC_Order $subscription, WC_Order $renewal_order, int $attempt, int $scheduled_at): void
+    {
+        try {
+            do_action('wsz_subs_retry_queued', $subscription, $renewal_order, $attempt, $scheduled_at);
+        } catch (Throwable $throwable) {
+            $this->log_retry_event(
+                'warning',
+                __('Retry queued hook failed.', 'woo-subzero'),
+                $subscription,
+                $renewal_order,
+                $attempt,
+                array(
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
+        }
+    }
+
+    private function safe_send_retry_email(WC_Order $subscription, WC_Order $renewal_order, int $attempt, string $event): void
+    {
+        try {
+            $this->maybe_send_retry_email($subscription, $renewal_order, $attempt, $event);
+        } catch (Throwable $throwable) {
+            $this->log_retry_event(
+                'warning',
+                __('Retry notification failed.', 'woo-subzero'),
+                $subscription,
+                $renewal_order,
+                $attempt,
+                array(
+                    'event' => sanitize_key($event),
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
         }
     }
 

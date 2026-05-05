@@ -246,7 +246,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
             ->with('_wsz_subscription_ids', true)
             ->willReturn(array(10487));
         $order
-            ->expects($this->exactly(4))
+            ->expects($this->exactly(5))
             ->method('update_meta_data')
             ->willReturnCallback(
                 static function ($key, $value) use (&$order_meta): void {
@@ -294,6 +294,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('VY-9212-9171-2390', $order_meta['_wsz_paynl_recurring_id'] ?? '');
         $this->assertSame('recurring_id', $order_meta['_wsz_paynl_recurring_source'] ?? '');
         $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
+        $this->assertSame('no', $order_meta['_wsz_paynl_recurring_missing_logged'] ?? '');
     }
 
     public function test_paynl_token_can_be_recovered_from_parent_order_meta(): void
@@ -316,7 +317,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
                 )
             );
         $order
-            ->expects($this->exactly(4))
+            ->expects($this->exactly(5))
             ->method('update_meta_data')
             ->willReturnCallback(
                 static function ($key, $value) use (&$order_meta): void {
@@ -338,6 +339,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('VY-9212-9171-2390', $order_meta['_wsz_paynl_recurring_id'] ?? '');
         $this->assertSame('order_meta', $order_meta['_wsz_paynl_recurring_source'] ?? '');
         $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
+        $this->assertSame('no', $order_meta['_wsz_paynl_recurring_missing_logged'] ?? '');
     }
 
     public function test_paynl_token_recovery_ignores_recurring_token_hash_without_recurring_id(): void

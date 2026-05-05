@@ -249,8 +249,8 @@ class WSZ_Renewal_Engine
                 );
             }
 
-            $this->retry_manager->queue_retry($subscription, $renewal_order, 'renewal_failed');
-            do_action('wsz_subs_renewal_payment_failed', $subscription, $renewal_order);
+            $this->safe_queue_retry($subscription, $renewal_order, 'renewal_failed');
+            $this->safe_do_renewal_payment_failed($subscription, $renewal_order);
         } catch (Throwable $throwable) {
             $this->log_diagnostic(
                 'error',
@@ -1037,6 +1037,49 @@ class WSZ_Renewal_Engine
                     array('source' => 'woo-subzero')
                 );
             }
+        }
+    }
+
+    private function safe_queue_retry(WC_Order $subscription, WC_Order $renewal_order, string $reason): void
+    {
+        try {
+            $this->retry_manager->queue_retry($subscription, $renewal_order, $reason);
+        } catch (Throwable $throwable) {
+            $this->log_diagnostic(
+                'warning',
+                __('Retry queue failed after renewal payment failure.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
+
+            if (function_exists('wc_get_logger')) {
+                wc_get_logger()->warning(
+                    sprintf('Failed to queue retry for renewal order %d: %s', $renewal_order->get_id(), $throwable->getMessage()),
+                    array('source' => 'woo-subzero')
+                );
+            }
+        }
+    }
+
+    private function safe_do_renewal_payment_failed(WC_Order $subscription, WC_Order $renewal_order): void
+    {
+        try {
+            do_action('wsz_subs_renewal_payment_failed', $subscription, $renewal_order);
+        } catch (Throwable $throwable) {
+            $this->log_diagnostic(
+                'warning',
+                __('Renewal payment failed hook threw an exception.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
         }
     }
 
