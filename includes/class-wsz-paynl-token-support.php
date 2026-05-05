@@ -306,8 +306,6 @@ class WSZ_PayNL_Token_Support
         return array(
             'recurring_id',
             'recurringid',
-            'recurring_token',
-            'recurringtoken',
             'recurring_reference',
             'recurringreference',
             'recurring_reference_id',
@@ -322,8 +320,6 @@ class WSZ_PayNL_Token_Support
             'payment_token_recurringid',
             'payment_recurring_id',
             'payment_recurringid',
-            'payment_recurring_token',
-            'payment_recurringtoken',
             'mandate',
             'mandate_id',
             'mandateid',
@@ -413,7 +409,29 @@ class WSZ_PayNL_Token_Support
             }
         }
 
+        if (self::is_non_chargeable_recurring_token_key($meta_key)) {
+            return '';
+        }
+
         return sanitize_text_field($value);
+    }
+
+    private static function is_non_chargeable_recurring_token_key(string $key): bool
+    {
+        return in_array(
+            $key,
+            array(
+                'paynl_recurring_token',
+                'paynl_recurringtoken',
+                'pay_recurring_token',
+                'pay_recurringtoken',
+                'recurring_token',
+                'recurringtoken',
+                'payment_recurring_token',
+                'payment_recurringtoken',
+            ),
+            true
+        );
     }
 
     private static function get_meta_row_key($meta_row): string

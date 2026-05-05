@@ -367,6 +367,9 @@ class WSZ_PayNL_Gateway_Integration
                     'id' => $recurring_id,
                 ),
             ),
+            'options' => array(
+                'tokenization' => 1,
+            ),
             'stats' => array(
                 'extra1' => 'subscription_' . $subscription->get_id(),
                 'extra2' => 'renewal_' . $renewal_order->get_id(),

@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.31] - 2026-05-05
+
+### Fixed
+
+- Added PAY.nl `options.tokenization` to recurring token authorize requests to match the recurring payments documentation payload.
+- Stopped treating PAY.nl `recurring_token` hashes as chargeable recurring IDs when `recurring_id` is missing.
+
+### Tests
+
+- Added regression coverage for PAY.nl recurring authorize tokenization options and ignoring non-chargeable `recurring_token` hash fields.
+
 ## [0.1.30] - 2026-05-05
 
 ### Fixed
