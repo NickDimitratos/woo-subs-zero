@@ -17,6 +17,10 @@ class WSZ_PayNL_Gateway_Integration
 
     public function init(): void
     {
+        if (!$this->is_paynl_tokens_enabled()) {
+            return;
+        }
+
         add_action('woocommerce_api_wc_pay_gateway_exchange', array($this, 'intercept_paynl_token_exchange'), 1);
         add_filter('wsz_subs_tokenized_gateway_ids', array($this, 'register_gateway_ids'));
         add_filter('wsz_subs_recurring_charge_callback', array($this, 'provide_recurring_charge_callback'), 10, 6);
@@ -756,5 +760,20 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         return array_values(array_unique($normalized));
+    }
+
+    private function is_paynl_tokens_enabled(): bool
+    {
+        if (!function_exists('get_option')) {
+            return false;
+        }
+
+        $settings = get_option('wsz_subs_options', array());
+
+        if (!is_array($settings)) {
+            return false;
+        }
+
+        return 'yes' === sanitize_key((string) ($settings['enable_paynl_tokens'] ?? 'no'));
     }
 }

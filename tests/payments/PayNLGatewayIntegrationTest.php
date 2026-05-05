@@ -25,6 +25,9 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $GLOBALS['wsz_subs_test_orders'] = array();
         $GLOBALS['wsz_subs_test_order_queries'] = array();
         $GLOBALS['wsz_paynl_test_transactions'] = array();
+        $GLOBALS['wsz_subs_test_options'] = array(
+            'enable_paynl_tokens' => 'yes',
+        );
 
         if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
             WC_Payment_Tokens::reset_test_tokens();
@@ -36,6 +39,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         unset($GLOBALS['wsz_subs_test_orders']);
         unset($GLOBALS['wsz_subs_test_order_queries']);
         unset($GLOBALS['wsz_paynl_test_transactions']);
+        unset($GLOBALS['wsz_subs_test_options']);
 
         parent::tearDown();
     }
@@ -48,6 +52,18 @@ final class PayNLGatewayIntegrationTest extends TestCase
             WSZ_PayNL_Gateway_Integration::GATEWAY_ID,
             $integration->register_gateway_ids(array())
         );
+    }
+
+    public function test_integration_is_disabled_by_default(): void
+    {
+        unset($GLOBALS['wsz_subs_test_options']);
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $method = new ReflectionMethod(WSZ_PayNL_Gateway_Integration::class, 'is_paynl_tokens_enabled');
+        $method->setAccessible(true);
+
+        $this->assertFalse($method->invoke($integration));
     }
 
     public function test_recurring_callback_is_provided_for_paynl_renewal_orders(): void

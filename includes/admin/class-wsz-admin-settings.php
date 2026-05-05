@@ -216,6 +216,25 @@ class WSZ_Admin_Settings
             self::SETTINGS_PAGE
         );
 
+        add_settings_section(
+            'wsz_subs_payment_gateways',
+            __('Payment Gateways', 'woo-subzero'),
+            array($this, 'render_payment_gateways_section'),
+            self::SETTINGS_PAGE
+        );
+
+        add_settings_field(
+            'enable_paynl_tokens',
+            __('Enable PAY.nl tokens', 'woo-subzero'),
+            array($this, 'render_checkbox_field'),
+            self::SETTINGS_PAGE,
+            'wsz_subs_payment_gateways',
+            array(
+                'key' => 'enable_paynl_tokens',
+                'description' => $this->get_field_description('enable_paynl_tokens'),
+            )
+        );
+
         $testing_fields = array(
             'enable_test_mode' => __('Enable accelerated test billing', 'woo-subzero'),
             'enable_test_deferred_start' => __('Accelerate deferred start activation', 'woo-subzero'),
@@ -318,6 +337,7 @@ class WSZ_Admin_Settings
             'enable_test_mode' => $this->sanitize_yes_no($input['enable_test_mode'] ?? $defaults['enable_test_mode']),
             'enable_test_deferred_start' => $this->sanitize_yes_no($input['enable_test_deferred_start'] ?? $defaults['enable_test_deferred_start']),
             'enable_test_cycle_notifications' => $this->sanitize_yes_no($input['enable_test_cycle_notifications'] ?? $defaults['enable_test_cycle_notifications']),
+            'enable_paynl_tokens' => $this->sanitize_yes_no($input['enable_paynl_tokens'] ?? $defaults['enable_paynl_tokens']),
             'customer_suspension_limit' => min(30, max(0, (int) ($input['customer_suspension_limit'] ?? $defaults['customer_suspension_limit']))),
             'free_switch_window_days' => min(60, max(0, (int) ($input['free_switch_window_days'] ?? $defaults['free_switch_window_days']))),
             'early_renewal_window_days' => min(365, max(0, (int) ($input['early_renewal_window_days'] ?? $defaults['early_renewal_window_days']))),
@@ -381,6 +401,11 @@ class WSZ_Admin_Settings
     public function render_testing_section(): void
     {
         echo '<p>' . esc_html__('Use accelerated billing for QA only. This simulates recurring cycles in minutes instead of real billing periods.', 'woo-subzero') . '</p>';
+    }
+
+    public function render_payment_gateways_section(): void
+    {
+        echo '<p>' . esc_html__('Gateway-specific subscription integrations. Gateway credentials, availability, and checkout settings stay in WooCommerce > Settings > Payments.', 'woo-subzero') . '</p>';
     }
 
     public function render_switching_section(): void
@@ -477,6 +502,7 @@ class WSZ_Admin_Settings
             'enable_test_mode' => __('Runs recurring schedule calculations in minute-based test cycles instead of real day/week/month/year periods.', 'woo-subzero'),
             'enable_test_deferred_start' => __('When test mode is enabled, future customer-selected start dates are accelerated to a short minute-based delay.', 'woo-subzero'),
             'enable_test_cycle_notifications' => __('Adds a subscription note and fires a hook each accelerated cycle for easier QA verification.', 'woo-subzero'),
+            'enable_paynl_tokens' => __('Captures PAY.nl tokenization callbacks and uses stored PAY.nl recurring IDs for automatic subscription renewals. Leave disabled unless PAY.nl recurring card payments are configured.', 'woo-subzero'),
             'customer_suspension_limit' => __('Maximum number of customer-initiated suspensions allowed per subscription.', 'woo-subzero'),
             'enable_proration' => __('Turns on proration logic for subscription plan switches.', 'woo-subzero'),
             'prorate_recurring' => __('Adjusts recurring charges based on the unused portion of the previous plan.', 'woo-subzero'),
@@ -524,6 +550,10 @@ class WSZ_Admin_Settings
             'testing' => array(
                 'label' => __('Testing', 'woo-subzero'),
                 'section' => 'wsz_subs_testing',
+            ),
+            'payment-gateways' => array(
+                'label' => __('Payment Gateways', 'woo-subzero'),
+                'section' => 'wsz_subs_payment_gateways',
             ),
             'queue' => array(
                 'label' => __('Queue', 'woo-subzero'),
@@ -996,6 +1026,7 @@ class WSZ_Admin_Settings
             'enable_test_deferred_start' => 'yes',
             'test_deferred_start_minutes' => 1,
             'enable_test_cycle_notifications' => 'no',
+            'enable_paynl_tokens' => 'no',
             'enable_role_transitions' => 'no',
             'active_user_role' => 'customer',
             'inactive_user_role' => '',

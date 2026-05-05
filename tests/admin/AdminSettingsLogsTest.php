@@ -153,6 +153,51 @@ if (!function_exists('settings_fields')) {
     }
 }
 
+if (!function_exists('register_setting')) {
+    function register_setting($option_group, $option_name, $args = array())
+    {
+        $GLOBALS['wp_registered_settings'][(string) $option_name] = (array) $args;
+    }
+}
+
+if (!function_exists('add_settings_section')) {
+    function add_settings_section($id, $title, $callback, $page, $args = array())
+    {
+        $GLOBALS['wp_settings_sections'][(string) $page][(string) $id] = array(
+            'id' => (string) $id,
+            'title' => $title,
+            'callback' => $callback,
+        ) + (array) $args;
+    }
+}
+
+if (!function_exists('add_settings_field')) {
+    function add_settings_field($id, $title, $callback, $page, $section = 'default', $args = array())
+    {
+        $GLOBALS['wp_settings_fields'][(string) $page][(string) $section][(string) $id] = array(
+            'id' => (string) $id,
+            'title' => $title,
+            'callback' => $callback,
+            'args' => (array) $args,
+        );
+    }
+}
+
+if (!function_exists('do_settings_fields')) {
+    function do_settings_fields($page, $section)
+    {
+        $fields = $GLOBALS['wp_settings_fields'][(string) $page][(string) $section] ?? array();
+
+        foreach ($fields as $field) {
+            echo '<tr><th scope="row">' . esc_html((string) $field['title']) . '</th><td>';
+            if (is_callable($field['callback'])) {
+                call_user_func($field['callback'], (array) ($field['args'] ?? array()));
+            }
+            echo '</td></tr>';
+        }
+    }
+}
+
 if (!function_exists('wp_nonce_field')) {
     function wp_nonce_field($action = -1, $name = '_wpnonce', $referer = true, $display = true)
     {
@@ -245,12 +290,19 @@ final class AdminSettingsLogsTest extends TestCase
         $_GET = array();
         $_POST = array();
         $GLOBALS['wsz_admin_settings_options'] = array();
+        $GLOBALS['wp_settings_sections'] = array();
+        $GLOBALS['wp_settings_fields'] = array();
+        $GLOBALS['wp_registered_settings'] = array();
         unset($GLOBALS['wsz_admin_settings_redirect']);
     }
 
     protected function tearDown(): void
     {
         unset($GLOBALS['wsz_admin_settings_options']);
+        unset($GLOBALS['wp_settings_sections']);
+        unset($GLOBALS['wp_settings_fields']);
+        unset($GLOBALS['wp_registered_settings']);
+        unset($GLOBALS['wsz_subs_test_options']);
         unset($GLOBALS['wsz_admin_settings_redirect']);
         $_GET = array();
         $_POST = array();
@@ -318,5 +370,44 @@ final class AdminSettingsLogsTest extends TestCase
         $settings->clear_diagnostic_logs();
 
         $this->assertArrayNotHasKey('wsz_subs_diagnostic_logs', $GLOBALS['wsz_admin_settings_options']);
+    }
+
+    public function test_paynl_tokens_setting_defaults_to_disabled_and_sanitizes_yes_no(): void
+    {
+        $settings = new WSZ_Admin_Settings();
+
+        $defaulted = $settings->sanitize_settings(array());
+        $enabled = $settings->sanitize_settings(array('enable_paynl_tokens' => 'yes'));
+        $invalid = $settings->sanitize_settings(array('enable_paynl_tokens' => 'unexpected'));
+
+        $this->assertSame('no', $defaulted['enable_paynl_tokens'] ?? null);
+        $this->assertSame('yes', $enabled['enable_paynl_tokens'] ?? null);
+        $this->assertSame('no', $invalid['enable_paynl_tokens'] ?? null);
+    }
+
+    public function test_payment_gateways_tab_renders_paynl_token_toggle(): void
+    {
+        $_GET = array(
+            'page' => 'wsz-subs-settings',
+            'tab' => 'payment-gateways',
+        );
+
+        $GLOBALS['wsz_subs_test_options'] = array(
+            'enable_paynl_tokens' => 'yes',
+        );
+
+        $settings = new WSZ_Admin_Settings();
+        $settings->register_settings();
+
+        ob_start();
+        $settings->render_settings_page();
+        $output = ob_get_clean();
+
+        unset($GLOBALS['wsz_subs_test_options']);
+
+        $this->assertStringContainsString('Payment Gateways', $output);
+        $this->assertStringContainsString('Enable PAY.nl tokens', $output);
+        $this->assertStringContainsString('enable_paynl_tokens', $output);
+        $this->assertStringContainsString('checked="checked"', $output);
     }
 }

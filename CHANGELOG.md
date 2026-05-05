@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.24] - 2026-05-05
+
+### Added
+
+- Added a Payment Gateways settings tab with an `Enable PAY.nl tokens` toggle, defaulting to disabled.
+
+### Changed
+
+- Gated the PAY.nl token-exchange capture, tokenized renewal handler registration, and recurring callback behind the new PAY.nl token setting.
+
+### Tests
+
+- Added settings and PAY.nl integration coverage for the disabled-by-default token toggle.
+
 ## [0.1.23] - 2026-05-05
 
 ### Fixed
