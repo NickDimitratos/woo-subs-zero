@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.18] - 2026-05-05
+
+### Fixed
+
+- Changed WSZ subscription add-to-cart forms to a column layout and hid quantity controls at form scope.
+
 ## [0.1.17] - 2026-05-05
 
 ### Fixed
