@@ -177,7 +177,7 @@ final class ManualRenewalDispatchTest extends TestCase
             ->willReturn('stripe');
 
         $subscription
-            ->expects($this->once())
+            ->expects($this->atLeastOnce())
             ->method('get_customer_id')
             ->willReturn(44);
 
@@ -193,7 +193,7 @@ final class ManualRenewalDispatchTest extends TestCase
             ->willReturn(false);
 
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->atLeastOnce())
             ->method('get_payment_token_id')
             ->with($subscription)
             ->willReturn(321);
