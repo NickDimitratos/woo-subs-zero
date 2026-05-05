@@ -120,8 +120,8 @@ final class StartDateManagerTest extends TestCase
 
         $this->assertStringContainsString('name="wsz_subscription_start_specific_date"', $output);
         $this->assertStringContainsString('Start specific date', $output);
-        $this->assertStringContainsString('.single-product form.cart .wsz-subscription-start-date-field{flex:0 0 100%;width:100%;', $output);
-        $this->assertStringContainsString('.wsz-subscription-start-date-field~.quantity', $output);
+        $this->assertStringContainsString('form.cart:has(.wsz-subscription-start-date-field){display:flex!important;flex-direction:column!important;', $output);
+        $this->assertStringContainsString('form.cart:has(.wsz-subscription-start-date-field) .quantity', $output);
         $this->assertStringContainsString('class="wsz-subscription-start-date-input" style="display:none;"', $output);
         $this->assertStringContainsString('name="wsz_subscription_start_date"', $output);
         $this->assertStringContainsString('min="' . $tomorrow . '"', $output);

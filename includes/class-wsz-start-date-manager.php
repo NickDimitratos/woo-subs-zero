@@ -41,10 +41,11 @@ class WSZ_Start_Date_Manager
         $min_date = $this->get_minimum_selectable_date();
 
         echo '<style id="wsz-subscription-start-date-layout">';
-        echo '.single-product form.cart .wsz-subscription-start-date-field{flex:0 0 100%;width:100%;max-width:100%;align-self:stretch;box-sizing:border-box;margin:0 0 12px;order:-1;}';
+        echo '.single-product form.cart:has(.wsz-subscription-start-date-field){display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:12px!important;}';
+        echo '.single-product form.cart:has(.wsz-subscription-start-date-field) .quantity,.single-product form.cart:has(.wsz-subscription-start-date-field) .qib-container,.single-product form.cart:has(.wsz-subscription-start-date-field) .qty-box{display:none!important;}';
+        echo '.single-product form.cart .wsz-subscription-start-date-field{width:100%;max-width:100%;box-sizing:border-box;margin:0;}';
         echo '.single-product form.cart .wsz-subscription-start-date-field *{box-sizing:border-box;}';
         echo '.single-product form.cart .wsz-subscription-start-date-input input[type=date]{width:100%;max-width:240px;}';
-        echo '.single-product form.cart .wsz-subscription-start-date-field~.quantity,.single-product form.cart .wsz-subscription-start-date-field~.qib-container,.single-product form.cart .wsz-subscription-start-date-field~.qty-box{display:none!important;}';
         echo '</style>';
         echo '<div class="wsz-subscription-start-date-field">';
         echo '<label for="' . esc_attr(self::CHECKBOX_NAME) . '" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">';
