@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.15] - 2026-05-05
+
+### Changed
+
+- Replaced the always-visible subscription start date input with a "Start specific date" checkbox that reveals the date field only when selected.
+- Limited customer-selected subscription start dates to tomorrow or later while unchecked purchases continue from the current checkout/order date.
+- Treat subscription products as sold individually so quantity controls are not shown for subscription purchases.
+
+### Tests
+
+- Added regression coverage for checkbox-gated start dates, tomorrow minimum validation, cart item capture, and subscription quantity suppression.
+
 ## [0.1.14] - 2026-05-05
 
 ### Added
