@@ -441,6 +441,60 @@ final class RetryManagerTest extends TestCase
         $this->assertSame('not_eligible', $records[1]['reason']);
     }
 
+    public function test_process_retry_continues_when_failed_status_update_hooks_throw(): void
+    {
+        $GLOBALS['wsz_subs_test_options'] = array('enable_retries' => 'yes');
+
+        $subscription = new RetryManagerDummyOrder(10, 'on-hold');
+        $renewal_order = new RetryManagerThrowingStatusOrder(
+            20,
+            'pending',
+            array(
+                '_wsz_retry_records' => wp_json_encode(
+                    array(
+                        1 => array('attempt' => 1, 'status' => 'pending'),
+                    )
+                ),
+            ),
+            true
+        );
+        $GLOBALS['wsz_retry_test_orders'][20] = $renewal_order;
+        $GLOBALS['wsz_test_orders'][20] = $renewal_order;
+        $GLOBALS['wsz_subs_test_orders'][20] = $renewal_order;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->method('get_subscription')
+            ->with(10)
+            ->willReturn($subscription);
+        $subscription_manager
+            ->method('acquire_lock')
+            ->with('retry_20', 1, 300)
+            ->willReturn(true);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('release_lock')
+            ->with('retry_20', 1);
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $payment_handler
+            ->expects($this->once())
+            ->method('dispatch_scheduled_payment')
+            ->with($subscription, $renewal_order, 42.5);
+
+        $retry_manager = new WSZ_Retry_Manager($subscription_manager, $payment_handler);
+        $retry_manager->process_retry(10, 20, 1);
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+        $messages = array_column($logs, 'message');
+
+        $this->assertContains('Retry order status update failed.', $messages);
+        $this->assertContains('Retry payment failed.', $messages);
+        $this->assertNotContains('Retry payment processing failed.', $messages);
+    }
+
     private function getScheduledActions(): array
     {
         if (!empty($GLOBALS['wsz_retry_test_scheduled_actions']) && is_array($GLOBALS['wsz_retry_test_scheduled_actions'])) {
@@ -455,7 +509,7 @@ final class RetryManagerTest extends TestCase
     }
 }
 
-final class RetryManagerDummyOrder extends WC_Order
+class RetryManagerDummyOrder extends WC_Order
 {
     private int $id;
 
@@ -542,5 +596,17 @@ final class RetryManagerDummyOrder extends WC_Order
         $records = json_decode((string) $this->get_meta('_wsz_retry_records', true), true);
 
         return is_array($records) ? $records : array();
+    }
+}
+
+final class RetryManagerThrowingStatusOrder extends RetryManagerDummyOrder
+{
+    public function update_status($status, $note = '', $manual = false)
+    {
+        if ('failed' === $status) {
+            throw new ValueError('Unknown format specifier ","');
+        }
+
+        parent::update_status($status, $note, $manual);
     }
 }

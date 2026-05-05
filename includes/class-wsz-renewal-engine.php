@@ -229,7 +229,12 @@ class WSZ_Renewal_Engine
             }
 
             if (!$renewal_order->has_status(array('failed'))) {
-                $renewal_order->update_status('failed', __('Scheduled renewal payment failed.', 'woo-subzero'));
+                $this->safe_update_renewal_order_status(
+                    $subscription,
+                    $renewal_order,
+                    'failed',
+                    __('Scheduled renewal payment failed.', 'woo-subzero')
+                );
             }
 
             if ('active' === $subscription->get_status()) {
@@ -968,6 +973,36 @@ class WSZ_Renewal_Engine
         );
 
         do_action('wsz_subs_test_cycle_notification', $subscription, $next_payment_timestamp, $cycle_minutes);
+    }
+
+    private function safe_update_renewal_order_status(
+        WC_Order $subscription,
+        WC_Order $renewal_order,
+        string $status,
+        string $note
+    ): void {
+        try {
+            $renewal_order->update_status($status, $note);
+        } catch (Throwable $throwable) {
+            $this->log_diagnostic(
+                'warning',
+                __('Renewal order status update failed.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'target_status' => sanitize_key($status),
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
+
+            if (function_exists('wc_get_logger')) {
+                wc_get_logger()->warning(
+                    sprintf('Failed to mark renewal order %d as %s: %s', $renewal_order->get_id(), $status, $throwable->getMessage()),
+                    array('source' => 'woo-subzero')
+                );
+            }
+        }
     }
 
     private function log_diagnostic(string $level, string $message, array $context = array()): void
