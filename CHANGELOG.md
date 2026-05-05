@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.26] - 2026-05-05
+
+### Fixed
+
+- Preserved existing settings from other admin tabs when saving a single Woo Subs-Zero settings tab.
+- Added hidden `no` inputs for checkbox fields so unchecked boxes on the active tab still save intentionally.
+
+### Tests
+
+- Added regression coverage for saving Payment Gateways without resetting Testing settings and saving Testing without disabling PAY.nl tokens.
+
 ## [0.1.25] - 2026-05-05
 
 ### Fixed

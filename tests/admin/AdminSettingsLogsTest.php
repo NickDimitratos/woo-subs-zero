@@ -385,6 +385,52 @@ final class AdminSettingsLogsTest extends TestCase
         $this->assertSame('no', $invalid['enable_paynl_tokens'] ?? null);
     }
 
+    public function test_partial_payment_gateways_save_preserves_testing_settings(): void
+    {
+        $GLOBALS['wsz_subs_test_options'] = array(
+            'enable_test_mode' => 'yes',
+            'enable_test_deferred_start' => 'yes',
+            'enable_test_cycle_notifications' => 'yes',
+            'test_cycle_minutes' => 7,
+            'enable_paynl_tokens' => 'no',
+        );
+
+        $settings = new WSZ_Admin_Settings();
+        $sanitized = $settings->sanitize_settings(array('enable_paynl_tokens' => 'yes'));
+
+        $this->assertSame('yes', $sanitized['enable_paynl_tokens'] ?? null);
+        $this->assertSame('yes', $sanitized['enable_test_mode'] ?? null);
+        $this->assertSame('yes', $sanitized['enable_test_deferred_start'] ?? null);
+        $this->assertSame('yes', $sanitized['enable_test_cycle_notifications'] ?? null);
+        $this->assertSame(7, $sanitized['test_cycle_minutes'] ?? null);
+    }
+
+    public function test_partial_testing_save_preserves_paynl_token_setting(): void
+    {
+        $GLOBALS['wsz_subs_test_options'] = array(
+            'enable_test_mode' => 'yes',
+            'enable_test_deferred_start' => 'yes',
+            'enable_test_cycle_notifications' => 'yes',
+            'enable_paynl_tokens' => 'yes',
+        );
+
+        $settings = new WSZ_Admin_Settings();
+        $sanitized = $settings->sanitize_settings(
+            array(
+                'enable_test_mode' => 'no',
+                'enable_test_deferred_start' => 'no',
+                'enable_test_cycle_notifications' => 'no',
+                'test_cycle_minutes' => 3,
+            )
+        );
+
+        $this->assertSame('yes', $sanitized['enable_paynl_tokens'] ?? null);
+        $this->assertSame('no', $sanitized['enable_test_mode'] ?? null);
+        $this->assertSame('no', $sanitized['enable_test_deferred_start'] ?? null);
+        $this->assertSame('no', $sanitized['enable_test_cycle_notifications'] ?? null);
+        $this->assertSame(3, $sanitized['test_cycle_minutes'] ?? null);
+    }
+
     public function test_payment_gateways_tab_renders_paynl_token_toggle(): void
     {
         $_GET = array(
@@ -408,6 +454,7 @@ final class AdminSettingsLogsTest extends TestCase
         $this->assertStringContainsString('Payment Gateways', $output);
         $this->assertStringContainsString('Enable PAY.nl tokens', $output);
         $this->assertStringContainsString('enable_paynl_tokens', $output);
+        $this->assertStringContainsString('type="hidden" name="wsz_subs_options[enable_paynl_tokens]" value="no"', $output);
         $this->assertStringContainsString('checked="checked"', $output);
     }
 }

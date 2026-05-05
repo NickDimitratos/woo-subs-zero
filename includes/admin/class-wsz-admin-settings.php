@@ -315,39 +315,41 @@ class WSZ_Admin_Settings
     public function sanitize_settings(array $input): array
     {
         $defaults = $this->default_settings();
+        $current = wp_parse_args((array) get_option(self::OPTION_KEY, array()), $defaults);
+        $settings = wp_parse_args($input, $current);
 
         $output = array(
-            'enable_manual_renewals' => $this->sanitize_yes_no($input['enable_manual_renewals'] ?? $defaults['enable_manual_renewals']),
-            'auto_restore_automatic_renewals' => $this->sanitize_yes_no($input['auto_restore_automatic_renewals'] ?? $defaults['auto_restore_automatic_renewals']),
-            'enable_retries' => $this->sanitize_yes_no($input['enable_retries'] ?? $defaults['enable_retries']),
-            'enable_retry_emails_customer' => $this->sanitize_yes_no($input['enable_retry_emails_customer'] ?? $defaults['enable_retry_emails_customer']),
-            'enable_retry_emails_admin' => $this->sanitize_yes_no($input['enable_retry_emails_admin'] ?? $defaults['enable_retry_emails_admin']),
-            'enable_start_date' => $this->sanitize_yes_no($input['enable_start_date'] ?? $defaults['enable_start_date']),
-            'enable_switching' => $this->sanitize_yes_no($input['enable_switching'] ?? $defaults['enable_switching']),
-            'enable_synchronization' => $this->sanitize_yes_no($input['enable_synchronization'] ?? $defaults['enable_synchronization']),
-            'enable_proration' => $this->sanitize_yes_no($input['enable_proration'] ?? $defaults['enable_proration']),
-            'prorate_recurring' => $this->sanitize_yes_no($input['prorate_recurring'] ?? $defaults['prorate_recurring']),
-            'prorate_signup_fee' => $this->sanitize_yes_no($input['prorate_signup_fee'] ?? $defaults['prorate_signup_fee']),
-            'proration_subscription_length' => $this->sanitize_yes_no($input['proration_subscription_length'] ?? $defaults['proration_subscription_length']),
-            'enable_early_renewal' => $this->sanitize_yes_no($input['enable_early_renewal'] ?? $defaults['enable_early_renewal']),
-            'enable_resubscribe' => $this->sanitize_yes_no($input['enable_resubscribe'] ?? $defaults['enable_resubscribe']),
-            'allow_synced_early_renewal' => $this->sanitize_yes_no($input['allow_synced_early_renewal'] ?? $defaults['allow_synced_early_renewal']),
-            'enable_sync_first_renewal_proration' => $this->sanitize_yes_no($input['enable_sync_first_renewal_proration'] ?? $defaults['enable_sync_first_renewal_proration']),
-            'enable_role_transitions' => $this->sanitize_yes_no($input['enable_role_transitions'] ?? $defaults['enable_role_transitions']),
-            'enable_test_mode' => $this->sanitize_yes_no($input['enable_test_mode'] ?? $defaults['enable_test_mode']),
-            'enable_test_deferred_start' => $this->sanitize_yes_no($input['enable_test_deferred_start'] ?? $defaults['enable_test_deferred_start']),
-            'enable_test_cycle_notifications' => $this->sanitize_yes_no($input['enable_test_cycle_notifications'] ?? $defaults['enable_test_cycle_notifications']),
-            'enable_paynl_tokens' => $this->sanitize_yes_no($input['enable_paynl_tokens'] ?? $defaults['enable_paynl_tokens']),
-            'customer_suspension_limit' => min(30, max(0, (int) ($input['customer_suspension_limit'] ?? $defaults['customer_suspension_limit']))),
-            'free_switch_window_days' => min(60, max(0, (int) ($input['free_switch_window_days'] ?? $defaults['free_switch_window_days']))),
-            'early_renewal_window_days' => min(365, max(0, (int) ($input['early_renewal_window_days'] ?? $defaults['early_renewal_window_days']))),
-            'sync_day_of_month' => min(28, max(1, (int) ($input['sync_day_of_month'] ?? $defaults['sync_day_of_month']))),
-            'test_cycle_minutes' => min(1440, max(1, (int) ($input['test_cycle_minutes'] ?? $defaults['test_cycle_minutes']))),
-            'test_deferred_start_minutes' => min(1440, max(1, (int) ($input['test_deferred_start_minutes'] ?? $defaults['test_deferred_start_minutes']))),
-            'active_user_role' => sanitize_key((string) ($input['active_user_role'] ?? $defaults['active_user_role'])),
-            'inactive_user_role' => sanitize_key((string) ($input['inactive_user_role'] ?? $defaults['inactive_user_role'])),
-            'queue_batch_size' => min(1000, max(25, (int) ($input['queue_batch_size'] ?? $defaults['queue_batch_size']))),
-            'queue_concurrent_batches' => min(20, max(1, (int) ($input['queue_concurrent_batches'] ?? $defaults['queue_concurrent_batches']))),
+            'enable_manual_renewals' => $this->sanitize_yes_no($settings['enable_manual_renewals']),
+            'auto_restore_automatic_renewals' => $this->sanitize_yes_no($settings['auto_restore_automatic_renewals']),
+            'enable_retries' => $this->sanitize_yes_no($settings['enable_retries']),
+            'enable_retry_emails_customer' => $this->sanitize_yes_no($settings['enable_retry_emails_customer']),
+            'enable_retry_emails_admin' => $this->sanitize_yes_no($settings['enable_retry_emails_admin']),
+            'enable_start_date' => $this->sanitize_yes_no($settings['enable_start_date']),
+            'enable_switching' => $this->sanitize_yes_no($settings['enable_switching']),
+            'enable_synchronization' => $this->sanitize_yes_no($settings['enable_synchronization']),
+            'enable_proration' => $this->sanitize_yes_no($settings['enable_proration']),
+            'prorate_recurring' => $this->sanitize_yes_no($settings['prorate_recurring']),
+            'prorate_signup_fee' => $this->sanitize_yes_no($settings['prorate_signup_fee']),
+            'proration_subscription_length' => $this->sanitize_yes_no($settings['proration_subscription_length']),
+            'enable_early_renewal' => $this->sanitize_yes_no($settings['enable_early_renewal']),
+            'enable_resubscribe' => $this->sanitize_yes_no($settings['enable_resubscribe']),
+            'allow_synced_early_renewal' => $this->sanitize_yes_no($settings['allow_synced_early_renewal']),
+            'enable_sync_first_renewal_proration' => $this->sanitize_yes_no($settings['enable_sync_first_renewal_proration']),
+            'enable_role_transitions' => $this->sanitize_yes_no($settings['enable_role_transitions']),
+            'enable_test_mode' => $this->sanitize_yes_no($settings['enable_test_mode']),
+            'enable_test_deferred_start' => $this->sanitize_yes_no($settings['enable_test_deferred_start']),
+            'enable_test_cycle_notifications' => $this->sanitize_yes_no($settings['enable_test_cycle_notifications']),
+            'enable_paynl_tokens' => $this->sanitize_yes_no($settings['enable_paynl_tokens']),
+            'customer_suspension_limit' => min(30, max(0, (int) $settings['customer_suspension_limit'])),
+            'free_switch_window_days' => min(60, max(0, (int) $settings['free_switch_window_days'])),
+            'early_renewal_window_days' => min(365, max(0, (int) $settings['early_renewal_window_days'])),
+            'sync_day_of_month' => min(28, max(1, (int) $settings['sync_day_of_month'])),
+            'test_cycle_minutes' => min(1440, max(1, (int) $settings['test_cycle_minutes'])),
+            'test_deferred_start_minutes' => min(1440, max(1, (int) $settings['test_deferred_start_minutes'])),
+            'active_user_role' => sanitize_key((string) $settings['active_user_role']),
+            'inactive_user_role' => sanitize_key((string) $settings['inactive_user_role']),
+            'queue_batch_size' => min(1000, max(25, (int) $settings['queue_batch_size'])),
+            'queue_concurrent_batches' => min(20, max(1, (int) $settings['queue_concurrent_batches'])),
         );
 
         return $output;
@@ -428,6 +430,12 @@ class WSZ_Admin_Settings
         $key = (string) ($args['key'] ?? '');
         $settings = $this->get_settings();
         $value = $settings[$key] ?? 'no';
+
+        printf(
+            '<input type="hidden" name="%1$s[%2$s]" value="no" />',
+            esc_attr(self::OPTION_KEY),
+            esc_attr($key)
+        );
 
         printf(
             '<input type="checkbox" name="%1$s[%2$s]" value="yes" %3$s />',
