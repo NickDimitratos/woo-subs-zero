@@ -222,6 +222,45 @@ final class TokenizedGatewayDispatchTest extends TestCase
         $this->assertSame('Tokenized recurring payment processing failed.', $logs[0]['message'] ?? '');
         $this->assertSame('Unknown format specifier ","', $logs[0]['context']['reason'] ?? '');
     }
+
+    public function test_missing_token_failure_does_not_escape_when_status_update_hooks_throw(): void
+    {
+        $subscription = new TokenizedGatewayDispatchPayNLOrder(
+            10519,
+            'active',
+            array('_payment_token_id' => 0)
+        );
+        $renewal_order = new TokenizedGatewayDispatchThrowingStatusOrder(
+            10520,
+            'pending',
+            array('_wsz_subscription_id' => 10519)
+        );
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->method('get_subscription')
+            ->with(10519)
+            ->willReturn($subscription);
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(array('get_payment_token_for_subscription'))
+            ->getMock();
+        $payment_handler
+            ->method('get_payment_token_for_subscription')
+            ->with($subscription)
+            ->willReturn(null);
+
+        $gateway = new WSZ_Tokenized_Gateway($subscription_manager, $payment_handler);
+
+        $gateway->process_scheduled_payment(12.34, $renewal_order);
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+        $messages = array_column($logs, 'message');
+
+        $this->assertContains('Missing or invalid payment token for renewal.', $messages);
+        $this->assertContains('Renewal status update failed after tokenized payment failure.', $messages);
+    }
 }
 
 class TokenizedGatewayDispatchDummyOrder extends WC_Order
@@ -288,5 +327,26 @@ final class TokenizedGatewayDispatchThrowingPaymentOrder extends TokenizedGatewa
     public function payment_complete($transaction_id = '')
     {
         throw new ValueError('Unknown format specifier ","');
+    }
+}
+
+final class TokenizedGatewayDispatchThrowingStatusOrder extends TokenizedGatewayDispatchDummyOrder
+{
+    public function update_status($status, $note = '', $manual = false)
+    {
+        throw new ValueError('Unknown format specifier ","');
+    }
+}
+
+final class TokenizedGatewayDispatchPayNLOrder extends TokenizedGatewayDispatchDummyOrder
+{
+    public function get_payment_method()
+    {
+        return 'pay_gateway_creditcardsgrouped';
+    }
+
+    public function get_customer_id()
+    {
+        return 9;
     }
 }

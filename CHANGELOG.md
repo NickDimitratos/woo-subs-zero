@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.28] - 2026-05-05
+
+### Fixed
+
+- Prevented WooCommerce status-hook format exceptions from escaping failed tokenized renewal and retry flows when a reusable payment token is missing.
+- Added missing-token diagnostics for tokenized renewals, including payment methods, customer token counts, stored token IDs, and parent-order references.
+- Replaced retry status-note formatting with brace placeholders to avoid translation format-string failures.
+
+### Tests
+
+- Added regression coverage for missing-token tokenized renewals and failed retry status updates when downstream status hooks throw `Unknown format specifier ","`.
+
 ## [0.1.27] - 2026-05-05
 
 ### Fixed

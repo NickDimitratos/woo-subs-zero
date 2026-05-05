@@ -88,7 +88,13 @@ class WSZ_Retry_Manager
 
         if ($next_attempt > count($rules)) {
             $this->update_retry_record($renewal_order, $next_attempt - 1, 'failed', 0, 'retry_rules_exhausted');
-            $renewal_order->update_status('failed', __('Retry rules exhausted.', 'woo-subzero'));
+            $this->safe_update_order_status(
+                $subscription,
+                $renewal_order,
+                $next_attempt - 1,
+                'failed',
+                __('Retry rules exhausted.', 'woo-subzero')
+            );
             $this->log_retry_event(
                 'warning',
                 __('Retry rules exhausted.', 'woo-subzero'),
@@ -116,7 +122,13 @@ class WSZ_Retry_Manager
         $renewal_order->save();
 
         if ($renewal_order->has_status(array('failed'))) {
-            $renewal_order->update_status('pending', sprintf(__('Retry %d queued.', 'woo-subzero'), $next_attempt));
+            $this->safe_update_order_status(
+                $subscription,
+                $renewal_order,
+                $next_attempt,
+                'pending',
+                $this->format_retry_note('queued', $next_attempt)
+            );
         }
 
         try {
@@ -236,7 +248,13 @@ class WSZ_Retry_Manager
             }
 
             $this->update_retry_record($renewal_order, $attempt, 'failed', 0, 'payment_not_completed');
-            $renewal_order->update_status('failed', sprintf(__('Retry %d failed.', 'woo-subzero'), $attempt));
+            $this->safe_update_order_status(
+                $subscription,
+                $renewal_order,
+                $attempt,
+                'failed',
+                $this->format_retry_note('failed', $attempt)
+            );
             $this->log_retry_event(
                 'warning',
                 __('Retry payment failed.', 'woo-subzero'),
@@ -263,6 +281,40 @@ class WSZ_Retry_Manager
         } finally {
             $this->subscription_manager->release_lock('retry_' . $order_id, $attempt);
         }
+    }
+
+    private function safe_update_order_status(
+        WC_Order $subscription,
+        WC_Order $renewal_order,
+        int $attempt,
+        string $status,
+        string $note
+    ): void {
+        try {
+            $renewal_order->update_status($status, $note);
+        } catch (Throwable $throwable) {
+            $this->log_retry_event(
+                'warning',
+                __('Retry order status update failed.', 'woo-subzero'),
+                $subscription,
+                $renewal_order,
+                $attempt,
+                array(
+                    'target_status' => sanitize_key($status),
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
+        }
+    }
+
+    private function format_retry_note(string $event, int $attempt): string
+    {
+        $template = 'queued' === $event
+            ? __('Retry {attempt} queued.', 'woo-subzero')
+            : __('Retry {attempt} failed.', 'woo-subzero');
+
+        return strtr($template, array('{attempt}' => (string) $attempt));
     }
 
     /**

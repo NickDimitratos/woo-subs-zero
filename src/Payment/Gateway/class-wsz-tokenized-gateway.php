@@ -96,37 +96,48 @@ class WSZ_Tokenized_Gateway
                 __('Could not resolve source subscription for renewal.', 'woo-subzero'),
                 array('renewal_order_id' => $renewal_order->get_id())
             );
-            $renewal_order->update_status('failed', __('Could not resolve source subscription for renewal.', 'woo-subzero'));
+            $this->mark_renewal_failed(
+                $renewal_order,
+                __('Could not resolve source subscription for renewal.', 'woo-subzero'),
+                array('renewal_order_id' => $renewal_order->get_id())
+            );
             return;
         }
 
         $token = $this->payment_handler->get_payment_token_for_subscription($subscription);
 
         if (!($token instanceof WC_Payment_Token)) {
+            $context = $this->build_missing_token_context($subscription, $renewal_order);
+
             $this->log_diagnostic(
                 'error',
                 __('Missing or invalid payment token for renewal.', 'woo-subzero'),
-                array(
-                    'subscription_id' => $subscription->get_id(),
-                    'renewal_order_id' => $renewal_order->get_id(),
-                )
+                $context
             );
-            $renewal_order->update_status('failed', __('Missing or invalid payment token for renewal.', 'woo-subzero'));
+            $this->mark_renewal_failed(
+                $renewal_order,
+                __('Missing or invalid payment token for renewal.', 'woo-subzero'),
+                $context
+            );
             return;
         }
 
         $recurring_id = (string) $token->get_token();
         if ('' === $recurring_id) {
+            $context = $this->build_missing_token_context($subscription, $renewal_order) + array(
+                'payment_token_id' => $token->get_id(),
+            );
+
             $this->log_diagnostic(
                 'error',
                 __('Recurring reference is empty for payment token.', 'woo-subzero'),
-                array(
-                    'subscription_id' => $subscription->get_id(),
-                    'renewal_order_id' => $renewal_order->get_id(),
-                    'payment_token_id' => $token->get_id(),
-                )
+                $context
             );
-            $renewal_order->update_status('failed', __('Recurring reference is empty for payment token.', 'woo-subzero'));
+            $this->mark_renewal_failed(
+                $renewal_order,
+                __('Recurring reference is empty for payment token.', 'woo-subzero'),
+                $context
+            );
             return;
         }
 
@@ -157,7 +168,15 @@ class WSZ_Tokenized_Gateway
             )
         );
 
-        $renewal_order->update_status('failed', $message);
+        $this->mark_renewal_failed(
+            $renewal_order,
+            $message,
+            array(
+                'subscription_id' => $subscription->get_id(),
+                'renewal_order_id' => $renewal_order->get_id(),
+                'payment_token_id' => $token->get_id(),
+            )
+        );
     }
 
     private function complete_paid_renewal_order(WC_Order $renewal_order, string $transaction_id): void
@@ -211,8 +230,105 @@ class WSZ_Tokenized_Gateway
         }
 
         if (!$renewal_order->is_paid() && !$renewal_order->has_status(array('failed'))) {
-            $renewal_order->update_status('failed', __('Tokenized recurring payment failed.', 'woo-subzero'));
+            $this->mark_renewal_failed(
+                $renewal_order,
+                __('Tokenized recurring payment failed.', 'woo-subzero'),
+                $context
+            );
         }
+    }
+
+    private function mark_renewal_failed(WC_Order $renewal_order, string $message, array $context = array()): void
+    {
+        try {
+            if (!$renewal_order->has_status(array('failed'))) {
+                $renewal_order->update_status('failed', $message);
+            }
+        } catch (Throwable $throwable) {
+            $this->safe_log_diagnostic(
+                'warning',
+                __('Renewal status update failed after tokenized payment failure.', 'woo-subzero'),
+                array(
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'status_update_target' => 'failed',
+                    'status_update_reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                ) + $context
+            );
+
+            $this->safe_log_to_woocommerce(
+                'warning',
+                sprintf('Failed to mark renewal order %d as failed: %s', $renewal_order->get_id(), $throwable->getMessage())
+            );
+        }
+    }
+
+    private function build_missing_token_context(WC_Order $subscription, WC_Order $renewal_order): array
+    {
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+        $customer_id = (int) $subscription->get_customer_id();
+
+        return array(
+            'subscription_id' => $subscription->get_id(),
+            'renewal_order_id' => $renewal_order->get_id(),
+            'gateway_id' => $gateway_id,
+            'renewal_payment_method' => sanitize_key((string) $renewal_order->get_payment_method()),
+            'subscription_customer_id' => $customer_id,
+            'stored_payment_token_id' => (int) $subscription->get_meta('_payment_token_id', true),
+            'renewal_order_token_meta' => $renewal_order->get_meta('_payment_token_id', true),
+            'subscription_parent_order_id' => $this->get_order_parent_id($subscription),
+            'subscription_parent_order_meta_id' => (int) $subscription->get_meta('_wsz_parent_order_id', true),
+            'renewal_order_parent_id' => $this->get_order_parent_id($renewal_order),
+        ) + $this->get_customer_token_context($customer_id, $gateway_id);
+    }
+
+    private function get_customer_token_context(int $customer_id, string $gateway_id): array
+    {
+        if (
+            $customer_id <= 0
+            || '' === $gateway_id
+            || !class_exists('WC_Payment_Tokens')
+            || !is_callable(array('WC_Payment_Tokens', 'get_customer_tokens'))
+        ) {
+            return array();
+        }
+
+        $tokens = WC_Payment_Tokens::get_customer_tokens($customer_id, $gateway_id);
+
+        if (!is_array($tokens)) {
+            return array('customer_gateway_tokens_result' => gettype($tokens));
+        }
+
+        $token_ids = array();
+        $token_classes = array();
+
+        foreach ($tokens as $token) {
+            if (!($token instanceof WC_Payment_Token)) {
+                continue;
+            }
+
+            $token_id = (int) $token->get_id();
+            if ($token_id > 0) {
+                $token_ids[] = $token_id;
+            }
+
+            $token_classes[] = get_class($token);
+        }
+
+        return array(
+            'customer_gateway_token_count' => count($tokens),
+            'customer_gateway_token_ids' => $token_ids,
+            'customer_gateway_token_classes' => array_values(array_unique($token_classes)),
+        );
+    }
+
+    private function get_order_parent_id(WC_Order $order): int
+    {
+        if (!is_callable(array($order, 'get_parent_id'))) {
+            return 0;
+        }
+
+        return (int) $order->get_parent_id();
     }
 
     private function resolve_subscription_from_renewal_order(WC_Order $renewal_order)
@@ -333,5 +449,35 @@ class WSZ_Tokenized_Gateway
 
         $context['source'] = 'woo-subzero';
         WSZ_Admin_Settings::log_diagnostic($level, $message, $context);
+    }
+
+    private function safe_log_diagnostic(string $level, string $message, array $context = array()): void
+    {
+        try {
+            $this->log_diagnostic($level, $message, $context);
+        } catch (Throwable $throwable) {
+            $this->safe_log_to_woocommerce(
+                'warning',
+                sprintf('Woo Subs-Zero diagnostic logging failed: %s', $throwable->getMessage())
+            );
+        }
+    }
+
+    private function safe_log_to_woocommerce(string $level, string $message): void
+    {
+        if (!function_exists('wc_get_logger')) {
+            return;
+        }
+
+        try {
+            $logger = wc_get_logger();
+            $level = sanitize_key($level);
+
+            if (is_object($logger) && is_callable(array($logger, $level))) {
+                $logger->{$level}($message, array('source' => 'woo-subzero'));
+            }
+        } catch (Throwable $throwable) {
+            return;
+        }
     }
 }
