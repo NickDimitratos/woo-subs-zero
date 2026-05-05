@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.17] - 2026-05-05
+
+### Fixed
+
+- Forced the subscription start-date selector onto its own full-width row in flex add-to-cart forms.
+- Added a scoped quantity-control CSS fallback for subscription product forms where themes ignore WooCommerce sold-individually behavior.
+
 ## [0.1.16] - 2026-05-05
 
 ### Changed

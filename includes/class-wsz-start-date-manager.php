@@ -40,7 +40,13 @@ class WSZ_Start_Date_Manager
 
         $min_date = $this->get_minimum_selectable_date();
 
-        echo '<div class="wsz-subscription-start-date-field" style="margin:12px 0;">';
+        echo '<style id="wsz-subscription-start-date-layout">';
+        echo '.single-product form.cart .wsz-subscription-start-date-field{flex:0 0 100%;width:100%;max-width:100%;align-self:stretch;box-sizing:border-box;margin:0 0 12px;order:-1;}';
+        echo '.single-product form.cart .wsz-subscription-start-date-field *{box-sizing:border-box;}';
+        echo '.single-product form.cart .wsz-subscription-start-date-input input[type=date]{width:100%;max-width:240px;}';
+        echo '.single-product form.cart .wsz-subscription-start-date-field~.quantity,.single-product form.cart .wsz-subscription-start-date-field~.qib-container,.single-product form.cart .wsz-subscription-start-date-field~.qty-box{display:none!important;}';
+        echo '</style>';
+        echo '<div class="wsz-subscription-start-date-field">';
         echo '<label for="' . esc_attr(self::CHECKBOX_NAME) . '" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">';
         echo '<input type="checkbox" id="' . esc_attr(self::CHECKBOX_NAME) . '" name="' . esc_attr(self::CHECKBOX_NAME) . '" value="yes" />';
         echo '<span>' . esc_html__('Start specific date', 'woo-subzero') . '</span>';
