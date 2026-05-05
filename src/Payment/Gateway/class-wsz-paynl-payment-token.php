@@ -13,3 +13,16 @@ if (class_exists('WC_Payment_Token') && !class_exists('WC_Payment_Token_PayNL'))
         }
     }
 }
+
+if (function_exists('add_filter')) {
+    add_filter(
+        'woocommerce_payment_token_class',
+        static function (string $class, string $type): string {
+            return 'PayNL' === $type && class_exists('WC_Payment_Token_PayNL')
+                ? 'WC_Payment_Token_PayNL'
+                : $class;
+        },
+        10,
+        2
+    );
+}

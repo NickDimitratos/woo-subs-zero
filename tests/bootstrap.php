@@ -87,6 +87,40 @@ if (!function_exists('WC')) {
     }
 }
 
+if (!function_exists('wc_get_order')) {
+    function wc_get_order($order_id)
+    {
+        $order_id = (int) $order_id;
+
+        if (isset($GLOBALS['wsz_subs_test_orders'][$order_id])) {
+            return $GLOBALS['wsz_subs_test_orders'][$order_id];
+        }
+
+        if (isset($GLOBALS['wsz_test_orders'][$order_id])) {
+            return $GLOBALS['wsz_test_orders'][$order_id];
+        }
+
+        if (isset($GLOBALS['wsz_test_card_orders'][$order_id])) {
+            return $GLOBALS['wsz_test_card_orders'][$order_id];
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('wc_get_orders')) {
+    function wc_get_orders($args = array())
+    {
+        $orders = $GLOBALS['wsz_subs_test_order_queries'] ?? array();
+
+        if (!empty($args['meta_key']) && isset($args['meta_value'])) {
+            return $orders[(string) $args['meta_key'] . '|' . (string) $args['meta_value']] ?? array();
+        }
+
+        return array();
+    }
+}
+
 if (!function_exists('wp_parse_args')) {
     function wp_parse_args($args, $defaults = array())
     {
