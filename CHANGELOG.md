@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.16] - 2026-05-05
+
+### Changed
+
+- Updated the release workflow so merged `main` pushes publish a GitHub Release ZIP automatically when the plugin header version changes.
+
 ## [0.1.15] - 2026-05-05
 
 ### Changed
