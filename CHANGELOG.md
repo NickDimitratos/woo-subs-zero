@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.19] - 2026-05-05
+
+### Fixed
+
+- Removed the sold-individually product filter so subscription quantity is only hidden with CSS, not disabled in WooCommerce.
+
 ## [0.1.18] - 2026-05-05
 
 ### Fixed

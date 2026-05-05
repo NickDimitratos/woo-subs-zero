@@ -223,25 +223,6 @@ final class ProductTypeManagerIsolationTest extends TestCase
         $this->assertTrue($manager->filter_product_is_virtual(true, $simple));
     }
 
-    public function test_force_subscription_products_sold_individually_for_wsz_types(): void
-    {
-        $manager = new WSZ_Product_Type_Manager();
-
-        $subscription = new ProductTypeManagerDummyProduct(WSZ_Product_Type_Manager::SIMPLE_TYPE);
-
-        $this->assertTrue($manager->force_subscription_products_sold_individually(false, $subscription));
-    }
-
-    public function test_force_subscription_products_sold_individually_preserves_non_subscription_products(): void
-    {
-        $manager = new WSZ_Product_Type_Manager();
-
-        $simple = new ProductTypeManagerDummyProduct('simple');
-
-        $this->assertFalse($manager->force_subscription_products_sold_individually(false, $simple));
-        $this->assertTrue($manager->force_subscription_products_sold_individually(true, $simple));
-    }
-
     public function test_render_wsz_simple_add_to_cart_uses_woocommerce_renderer(): void
     {
         $GLOBALS['wsz_test_simple_add_to_cart_calls'] = 0;
