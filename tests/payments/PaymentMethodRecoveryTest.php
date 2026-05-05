@@ -9,7 +9,24 @@ if (!function_exists('get_option')) {
             return $GLOBALS['wsz_subs_test_options'];
         }
 
+        if (isset($GLOBALS['wsz_admin_test_options']) && is_array($GLOBALS['wsz_admin_test_options']) && array_key_exists($option_name, $GLOBALS['wsz_admin_test_options'])) {
+            return $GLOBALS['wsz_admin_test_options'][$option_name];
+        }
+
         return $default;
+    }
+}
+
+if (!function_exists('update_option')) {
+    function update_option($option_name, $value, $autoload = null)
+    {
+        if (!isset($GLOBALS['wsz_admin_test_options']) || !is_array($GLOBALS['wsz_admin_test_options'])) {
+            $GLOBALS['wsz_admin_test_options'] = array();
+        }
+
+        $GLOBALS['wsz_admin_test_options'][$option_name] = $value;
+
+        return true;
     }
 }
 
@@ -73,6 +90,7 @@ if (!function_exists('wc_get_order')) {
 
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-paynl-token-support.php';
+require_once dirname(__DIR__, 2) . '/includes/admin/class-wsz-admin-settings.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-payment-token.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-gateway.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/class-wsz-payment-handler.php';
@@ -86,6 +104,7 @@ final class PaymentMethodRecoveryTest extends TestCase
         $GLOBALS['wsz_subs_test_options'] = array(
             'auto_restore_automatic_renewals' => 'yes',
         );
+        $GLOBALS['wsz_admin_test_options'] = array();
 
         if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
             WC_Payment_Tokens::reset_test_tokens();
@@ -106,6 +125,7 @@ final class PaymentMethodRecoveryTest extends TestCase
     {
         unset($GLOBALS['wsz_subs_test_options']);
         unset($GLOBALS['wsz_subs_test_orders']);
+        unset($GLOBALS['wsz_admin_test_options']);
         parent::tearDown();
     }
 
@@ -453,6 +473,48 @@ final class PaymentMethodRecoveryTest extends TestCase
         $this->assertSame('VY-9212-9171-2390', $token->get_token('edit'));
         $this->assertSame($token->get_id(), $parent_order->get_meta('_payment_token_id', true));
         $this->assertCount(1, $parent_order->get_payment_tokens());
+    }
+
+    public function test_paid_paynl_parent_order_logs_when_recurring_token_is_missing(): void
+    {
+        $GLOBALS['wsz_subs_test_options']['enable_paynl_tokens'] = 'yes';
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+        $parent_order = new PaymentMethodRecoveryPayNLParentOrder(
+            10529,
+            9,
+            WSZ_PayNL_Gateway_Integration::GATEWAY_ID,
+            array()
+        );
+        $parent_order->update_meta_data('_wsz_subscription_ids', array(10530));
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10530);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(10530)
+            ->willReturn($subscription);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($parent_order, $subscription)
+            ->willReturn(false);
+        $subscription_manager
+            ->expects($this->never())
+            ->method('set_payment_token_id');
+
+        $handler->sync_subscriptions_from_paid_parent_order($parent_order);
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+        $messages = array_column($logs, 'message');
+
+        $this->assertContains('PAY.nl recurring token is not available on the paid parent order.', $messages);
+        $this->assertSame('yes', $parent_order->get_meta('_wsz_paynl_recurring_missing_logged', true));
+        $this->assertSame('no', $logs[0]['context']['parent_order_has_paynl_recurring_meta'] ?? '');
+        $this->assertSame('10529', $logs[0]['context']['parent_order_id'] ?? '');
     }
 
     public function test_sync_subscriptions_from_paid_parent_order_updates_linked_subscription_payment_context(): void

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.32] - 2026-05-05
+
+### Fixed
+
+- Prevented retry queueing, retry notifications, and non-critical renewal failure hooks from surfacing `Unknown format specifier ","` after a renewal payment token failure.
+- Added an earlier PAY.nl diagnostic when a paid parent order has no WooCommerce payment token and no captured PAY.nl `recurring_id`, so missing token context is visible before the first renewal.
+- Cleared the one-time missing PAY.nl token diagnostic marker if a later token exchange successfully saves the `recurring_id`.
+- Added PAY.nl token setting state to missing-token renewal diagnostics.
+
+### Tests
+
+- Added regression coverage for retry notification failures during retry queueing and missing PAY.nl recurring context logging after initial parent payment.
+
 ## [0.1.31] - 2026-05-05
 
 ### Fixed

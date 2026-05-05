@@ -284,6 +284,7 @@ class WSZ_Webhook_Handler
         }
 
         $order->update_meta_data('_payment_token_id', $token_id);
+        $order->update_meta_data('_wsz_paynl_recurring_missing_logged', 'no');
         WSZ_PayNL_Token_Support::cache_recurring_id_on_order(
             $order,
             $recurring_id,

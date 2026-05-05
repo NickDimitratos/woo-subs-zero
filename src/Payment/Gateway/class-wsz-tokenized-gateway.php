@@ -279,6 +279,7 @@ class WSZ_Tokenized_Gateway
             'subscription_parent_order_id' => $this->get_order_parent_id($subscription),
             'subscription_parent_order_meta_id' => (int) $subscription->get_meta('_wsz_parent_order_id', true),
             'renewal_order_parent_id' => $this->get_order_parent_id($renewal_order),
+            'paynl_tokens_enabled' => $this->are_paynl_tokens_enabled() ? 'yes' : 'no',
         ) + $this->get_parent_order_payment_context($subscription) + $this->get_customer_token_context($customer_id, $gateway_id);
     }
 
@@ -398,6 +399,18 @@ class WSZ_Tokenized_Gateway
             'customer_gateway_token_ids' => $token_ids,
             'customer_gateway_token_classes' => array_values(array_unique($token_classes)),
         );
+    }
+
+    private function are_paynl_tokens_enabled(): bool
+    {
+        if (!function_exists('get_option')) {
+            return false;
+        }
+
+        $options = get_option('wsz_subs_options', array());
+
+        return is_array($options)
+            && 'yes' === sanitize_key((string) ($options['enable_paynl_tokens'] ?? 'no'));
     }
 
     private function get_order_parent_id(WC_Order $order): int
