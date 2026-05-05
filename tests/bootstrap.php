@@ -15,7 +15,43 @@ if (!defined('DAY_IN_SECONDS')) {
 if (!function_exists('apply_filters')) {
     function apply_filters($hook_name, $value)
     {
+        $args = func_get_args();
+        $filters = $GLOBALS['wsz_test_filters'][(string) $hook_name] ?? array();
+
+        if (empty($filters) || !is_array($filters)) {
+            return $value;
+        }
+
+        ksort($filters);
+
+        foreach ($filters as $callbacks) {
+            foreach ($callbacks as $filter) {
+                $callback = $filter['callback'] ?? null;
+
+                if (!is_callable($callback)) {
+                    continue;
+                }
+
+                $accepted_args = max(1, (int) ($filter['accepted_args'] ?? 1));
+                $callback_args = array_slice($args, 1, $accepted_args);
+                $value = call_user_func_array($callback, $callback_args);
+                $args[1] = $value;
+            }
+        }
+
         return $value;
+    }
+}
+
+if (!function_exists('add_filter')) {
+    function add_filter($hook_name, $callback, $priority = 10, $accepted_args = 1)
+    {
+        $GLOBALS['wsz_test_filters'][(string) $hook_name][(int) $priority][] = array(
+            'callback' => $callback,
+            'accepted_args' => (int) $accepted_args,
+        );
+
+        return true;
     }
 }
 

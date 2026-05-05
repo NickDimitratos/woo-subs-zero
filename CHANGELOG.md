@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.25] - 2026-05-05
+
+### Fixed
+
+- Routed WSZ tokenized gateway renewals directly through the Woo Subs-Zero tokenized processor so PAY.nl recurring charges are not blocked by unrelated scheduled-payment listeners.
+- Caught and logged tokenized renewal processing throwables, including PHP format-string failures from downstream hooks, without aborting the renewal engine before retry handling can run.
+- Marked already-approved tokenized charges as processing when WooCommerce payment-completion hooks throw, preventing retry attempts from duplicating an approved recurring charge.
+
+### Tests
+
+- Added regression coverage for direct tokenized gateway dispatch and payment-completion format errors.
+
 ## [0.1.24] - 2026-05-05
 
 ### Added

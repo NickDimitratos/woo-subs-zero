@@ -79,6 +79,15 @@ class WSZ_Tokenized_Gateway
             return;
         }
 
+        try {
+            $this->process_scheduled_payment_for_order($amount, $renewal_order);
+        } catch (Throwable $throwable) {
+            $this->handle_processing_throwable($renewal_order, $throwable);
+        }
+    }
+
+    private function process_scheduled_payment_for_order($amount, WC_Order $renewal_order): void
+    {
         $subscription = $this->resolve_subscription_from_renewal_order($renewal_order);
 
         if (!($subscription instanceof WC_Order)) {
@@ -128,7 +137,7 @@ class WSZ_Tokenized_Gateway
             $transaction_id = isset($charge_result['transaction_id']) ? (string) $charge_result['transaction_id'] : '';
 
             if (!$renewal_order->is_paid()) {
-                $renewal_order->payment_complete($transaction_id);
+                $this->complete_paid_renewal_order($renewal_order, $transaction_id);
             }
 
             return;
@@ -149,6 +158,61 @@ class WSZ_Tokenized_Gateway
         );
 
         $renewal_order->update_status('failed', $message);
+    }
+
+    private function complete_paid_renewal_order(WC_Order $renewal_order, string $transaction_id): void
+    {
+        try {
+            $renewal_order->payment_complete($transaction_id);
+        } catch (Throwable $throwable) {
+            if (!$renewal_order->is_paid()) {
+                if ('' !== $transaction_id && is_callable(array($renewal_order, 'update_meta_data'))) {
+                    $renewal_order->update_meta_data('_transaction_id', $transaction_id);
+                }
+
+                $renewal_order->update_status(
+                    'processing',
+                    __('Recurring charge approved, but WooCommerce payment completion hooks failed.', 'woo-subzero')
+                );
+            }
+
+            throw $throwable;
+        }
+    }
+
+    private function handle_processing_throwable(WC_Order $renewal_order, Throwable $throwable): void
+    {
+        $context = array(
+            'renewal_order_id' => $renewal_order->get_id(),
+            'exception_class' => get_class($throwable),
+            'reason' => $throwable->getMessage(),
+        );
+
+        $subscription = $this->resolve_subscription_from_renewal_order($renewal_order);
+        if ($subscription instanceof WC_Order) {
+            $context['subscription_id'] = $subscription->get_id();
+        }
+
+        $this->log_diagnostic(
+            'error',
+            __('Tokenized recurring payment processing failed.', 'woo-subzero'),
+            $context
+        );
+
+        if (function_exists('wc_get_logger')) {
+            $logger = wc_get_logger();
+
+            if (is_object($logger) && is_callable(array($logger, 'error'))) {
+                $logger->error(
+                    sprintf('Tokenized recurring payment failed for renewal order %d: %s', $renewal_order->get_id(), $throwable->getMessage()),
+                    array('source' => 'woo-subzero')
+                );
+            }
+        }
+
+        if (!$renewal_order->is_paid() && !$renewal_order->has_status(array('failed'))) {
+            $renewal_order->update_status('failed', __('Tokenized recurring payment failed.', 'woo-subzero'));
+        }
     }
 
     private function resolve_subscription_from_renewal_order(WC_Order $renewal_order)
