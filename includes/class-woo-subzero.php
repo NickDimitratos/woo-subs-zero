@@ -187,6 +187,7 @@ final class WSZ_Woo_Subzero
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-early-renewal-manager.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-customer-actions-manager.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-checkout-handler.php';
+        require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-paynl-token-support.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-webhook-handler.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/admin/class-wsz-admin-settings.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/admin/class-wsz-admin-subscriptions.php';

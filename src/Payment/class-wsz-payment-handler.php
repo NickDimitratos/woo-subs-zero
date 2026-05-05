@@ -73,6 +73,10 @@ class WSZ_Payment_Handler
             return;
         }
 
+        if ($this->process_wsz_tokenized_gateway_payment($gateway_id, $amount, $renewal_order)) {
+            return;
+        }
+
         $gateway_registered = $this->is_gateway_registered($gateway_id);
         $has_reusable_payment_context = false;
         $payment_context_diagnostics = array();
@@ -107,10 +111,6 @@ class WSZ_Payment_Handler
             );
 
             do_action('wsz_subs_gateway_unavailable_manual_fallback', $subscription, $renewal_order, $gateway_id);
-            return;
-        }
-
-        if ($this->process_wsz_tokenized_gateway_payment($gateway_id, $amount, $renewal_order)) {
             return;
         }
 
@@ -399,6 +399,10 @@ class WSZ_Payment_Handler
         $gateway_id = sanitize_key((string) $order->get_payment_method());
         $token_id = $this->resolve_token_id_from_order($order);
 
+        if ($token_id <= 0) {
+            $token_id = $this->recover_paynl_token_id_from_order_meta($order);
+        }
+
         foreach ($subscription_ids as $subscription_id) {
             $subscription = $this->subscription_manager->get_subscription((int) $subscription_id);
 
@@ -447,6 +451,10 @@ class WSZ_Payment_Handler
 
         if ($token_id <= 0) {
             $token_id = $this->resolve_token_id_from_order($parent_order);
+        }
+
+        if ($token_id <= 0) {
+            $token_id = $this->recover_paynl_token_id_from_order_meta($parent_order);
         }
 
         if ($token_id <= 0 && '' !== $gateway_id) {
@@ -649,6 +657,7 @@ class WSZ_Payment_Handler
         return array(
             'gateway_registered' => $gateway_registered,
             'scheduled_payment_hook_has_listeners' => $this->has_gateway_scheduled_payment_listeners($gateway_id),
+            'is_wsz_tokenized_gateway' => $this->is_wsz_tokenized_gateway_id($gateway_id),
             'subscription_payment_method' => sanitize_key((string) $subscription->get_payment_method()),
             'subscription_payment_method_title' => (string) $subscription->get_payment_method_title(),
             'renewal_payment_method' => sanitize_key((string) $renewal_order->get_payment_method()),
@@ -862,6 +871,19 @@ class WSZ_Payment_Handler
         }
 
         return 0;
+    }
+
+    private function recover_paynl_token_id_from_order_meta(WC_Order $order): int
+    {
+        if (!class_exists('WSZ_PayNL_Gateway_Integration')) {
+            return 0;
+        }
+
+        if (!($this->paynl_gateway instanceof WSZ_PayNL_Gateway_Integration)) {
+            $this->paynl_gateway = new WSZ_PayNL_Gateway_Integration($this->subscription_manager);
+        }
+
+        return $this->paynl_gateway->store_recurring_payment_token_from_order_meta($order);
     }
 
     private function should_auto_restore_automatic_renewals(): bool

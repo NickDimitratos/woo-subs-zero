@@ -2,6 +2,10 @@
 
 defined('ABSPATH') || exit;
 
+if (!class_exists('WSZ_PayNL_Token_Support')) {
+    require_once dirname(__DIR__, 3) . '/includes/class-wsz-paynl-token-support.php';
+}
+
 class WSZ_PayNL_Gateway_Integration
 {
     public const GATEWAY_ID = 'pay_gateway_creditcardsgrouped';
@@ -31,6 +35,14 @@ class WSZ_PayNL_Gateway_Integration
         $payload = $this->read_exchange_payload();
 
         if (!$this->is_token_exchange_payload($payload)) {
+            if ('token' === sanitize_key((string) ($payload['action'] ?? ''))) {
+                $this->log_diagnostic(
+                    'warning',
+                    __('PAY.nl token exchange received without a recurring token reference.', 'woo-subzero'),
+                    $this->sanitize_token_exchange_log_context($payload)
+                );
+            }
+
             return;
         }
 
@@ -293,6 +305,33 @@ class WSZ_PayNL_Gateway_Integration
         return $token_id;
     }
 
+    public function store_recurring_payment_token_from_order_meta(WC_Order $order): int
+    {
+        if (!$this->is_paynl_tokens_enabled()) {
+            return 0;
+        }
+
+        $gateway_id = sanitize_key((string) $order->get_payment_method());
+        if ('' !== $gateway_id && !in_array($gateway_id, $this->get_gateway_ids(), true)) {
+            return 0;
+        }
+
+        $recurring_id = WSZ_PayNL_Token_Support::extract_recurring_id_from_order_meta($order);
+
+        if ('' === $recurring_id) {
+            return 0;
+        }
+
+        return $this->store_recurring_payment_token(
+            $order,
+            array(
+                'action' => 'token',
+                'recurring_id' => $recurring_id,
+                'source' => 'order_meta',
+            )
+        );
+    }
+
     /**
      * @return array<string,mixed>
      */
@@ -335,13 +374,7 @@ class WSZ_PayNL_Gateway_Integration
      */
     private function read_exchange_payload(): array
     {
-        $payload = array();
-
-        foreach ($_REQUEST as $key => $value) {
-            $payload[sanitize_key((string) $key)] = is_scalar($value) ? wp_unslash((string) $value) : '';
-        }
-
-        return $payload;
+        return WSZ_PayNL_Token_Support::read_exchange_payload();
     }
 
     /**
@@ -349,13 +382,7 @@ class WSZ_PayNL_Gateway_Integration
      */
     private function extract_recurring_id(array $payload): string
     {
-        foreach (array('recurring_id', 'recurringid', 'recurring_token', 'token') as $key) {
-            if (!empty($payload[$key]) && is_scalar($payload[$key])) {
-                return sanitize_text_field((string) $payload[$key]);
-            }
-        }
-
-        return '';
+        return WSZ_PayNL_Token_Support::extract_recurring_id($payload);
     }
 
     /**
@@ -363,13 +390,7 @@ class WSZ_PayNL_Gateway_Integration
      */
     private function extract_pay_order_id(array $payload): string
     {
-        foreach (array('order_id', 'orderid', 'id', 'transaction_id', 'transactionid') as $key) {
-            if (!empty($payload[$key]) && is_scalar($payload[$key])) {
-                return sanitize_text_field((string) $payload[$key]);
-            }
-        }
-
-        return '';
+        return WSZ_PayNL_Token_Support::extract_pay_order_id($payload);
     }
 
     private function resolve_order_from_paynl_transaction_table(string $pay_order_id): ?WC_Order
@@ -703,15 +724,22 @@ class WSZ_PayNL_Gateway_Integration
     {
         $context = array();
 
-        foreach (array('action', 'order_id', 'orderid', 'id', 'transaction_id', 'transactionid', 'reference', 'extra1', 'extra3') as $key) {
+        foreach (array('action', 'source', 'order_id', 'orderid', 'id', 'transaction_id', 'transactionid', 'payment_id', 'paymentid', 'payment_session_id', 'paymentsessionid', 'reference', 'extra1', 'extra3') as $key) {
             if (!empty($payload[$key]) && is_scalar($payload[$key])) {
                 $context[$key] = sanitize_text_field((string) $payload[$key]);
             }
         }
 
-        if ('' !== $this->extract_recurring_id($payload)) {
+        $recurring_id_source_key = WSZ_PayNL_Token_Support::extract_recurring_id_source_key($payload);
+
+        if ('' !== $recurring_id_source_key) {
             $context['has_recurring_id'] = 'yes';
+            $context['recurring_id_source_key'] = $recurring_id_source_key;
+        } else {
+            $context['has_recurring_id'] = 'no';
         }
+
+        $context['payload_keys'] = WSZ_PayNL_Token_Support::payload_keys($payload);
 
         return $context;
     }

@@ -94,6 +94,28 @@ final class WebhookIdempotencyTest extends TestCase
         );
     }
 
+    public function test_paynl_token_exchange_payload_accepts_token_id_alias(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Webhook_Handler($subscription_manager);
+
+        $method = new ReflectionMethod(WSZ_Webhook_Handler::class, 'is_token_exchange_payload');
+        $method->setAccessible(true);
+
+        $payload = WSZ_PayNL_Token_Support::normalize_payload(
+            array(
+                'action' => 'token',
+                'payment' => array(
+                    'token' => array(
+                        'id' => 'VY-9212-9171-2390',
+                    ),
+                ),
+            )
+        );
+
+        $this->assertTrue($method->invoke($handler, $payload));
+    }
+
     public function test_paynl_token_exchange_stores_payment_token_on_order_and_subscription(): void
     {
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);

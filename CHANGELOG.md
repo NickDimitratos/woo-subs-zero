@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.27] - 2026-05-05
+
+### Fixed
+
+- Normalized PAY.nl token callback payloads across the PAY.nl exchange endpoint and Woo Subs-Zero webhook endpoint, including nested JSON/XML/form bodies and alternate token ID field names.
+- Recovered PAY.nl recurring references from parent-order payment metadata when the callback was missed but PAY.nl stored the recurring payment context on the order.
+- Routed enabled Woo Subs-Zero tokenized gateways directly through the tokenized renewal processor even when WooCommerce's runtime gateway registry is empty during scheduled renewal processing.
+
+### Tests
+
+- Added regression coverage for nested PAY.nl token payloads, parent-order recurring metadata recovery, generic webhook token aliases, and tokenized renewal dispatch with an empty WooCommerce gateway registry.
+
 ## [0.1.26] - 2026-05-05
 
 ### Fixed
