@@ -8,6 +8,8 @@ class WSZ_Start_Date_Manager
 
     public const FIELD_NAME = 'wsz_subscription_start_date';
 
+    public const CHECKBOX_NAME = 'wsz_subscription_start_specific_date';
+
     public const CART_ITEM_KEY = 'wsz_subscription_start_date';
 
     public const ORDER_ITEM_META_KEY = '_wsz_requested_start_date';
@@ -36,16 +38,19 @@ class WSZ_Start_Date_Manager
             return;
         }
 
-        $min_date = function_exists('wp_date')
-            ? wp_date('Y-m-d')
-            : gmdate('Y-m-d');
+        $min_date = $this->get_minimum_selectable_date();
 
         echo '<div class="wsz-subscription-start-date-field" style="margin:12px 0;">';
+        echo '<label for="' . esc_attr(self::CHECKBOX_NAME) . '" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">';
+        echo '<input type="checkbox" id="' . esc_attr(self::CHECKBOX_NAME) . '" name="' . esc_attr(self::CHECKBOX_NAME) . '" value="yes" />';
+        echo '<span>' . esc_html__('Start specific date', 'woo-subzero') . '</span>';
+        echo '</label>';
+        echo '<div class="wsz-subscription-start-date-input" style="display:none;">';
         echo '<label for="' . esc_attr(self::FIELD_NAME) . '" style="display:block;margin-bottom:6px;">';
         echo esc_html__('Start subscription at', 'woo-subzero');
         echo '</label>';
-        // Keep this optional: empty means "start now".
-        echo '<input type="date" id="' . esc_attr(self::FIELD_NAME) . '" name="' . esc_attr(self::FIELD_NAME) . '" min="' . esc_attr($min_date) . '" />';
+        echo '<input type="date" id="' . esc_attr(self::FIELD_NAME) . '" name="' . esc_attr(self::FIELD_NAME) . '" min="' . esc_attr($min_date) . '" disabled="disabled" />';
+        echo '</div>';
         echo '</div>';
     }
 
@@ -63,11 +68,16 @@ class WSZ_Start_Date_Manager
             return $passed;
         }
 
+        if (!$this->is_specific_start_date_requested()) {
+            return true;
+        }
+
         $raw_date = $this->get_request_start_date();
         $raw_date = is_string($raw_date) ? trim($raw_date) : '';
 
         if ('' === $raw_date) {
-            return true;
+            wc_add_notice(__('Please choose a subscription start date.', 'woo-subzero'), 'error');
+            return false;
         }
 
         $start_timestamp = $this->date_string_to_timestamp($raw_date);
@@ -77,14 +87,10 @@ class WSZ_Start_Date_Manager
             return false;
         }
 
-        $today_timestamp = $this->date_string_to_timestamp(
-            function_exists('wp_date')
-                ? wp_date('Y-m-d')
-                : gmdate('Y-m-d')
-        );
+        $minimum_timestamp = $this->date_string_to_timestamp($this->get_minimum_selectable_date());
 
-        if ($today_timestamp > 0 && $start_timestamp < $today_timestamp) {
-            wc_add_notice(__('Subscription start date cannot be in the past.', 'woo-subzero'), 'error');
+        if ($minimum_timestamp > 0 && $start_timestamp < $minimum_timestamp) {
+            wc_add_notice(__('Subscription start date must be tomorrow or later.', 'woo-subzero'), 'error');
             return false;
         }
 
@@ -96,6 +102,10 @@ class WSZ_Start_Date_Manager
         $product = $this->resolve_request_product((int) $product_id, (int) $variation_id);
 
         if (!($product instanceof WC_Product) || !$this->is_subscription_product($product)) {
+            return $cart_item_data;
+        }
+
+        if (!$this->is_specific_start_date_requested()) {
             return $cart_item_data;
         }
 
@@ -118,7 +128,26 @@ class WSZ_Start_Date_Manager
      */
     private function get_request_start_date()
     {
-        $direct_value = isset($_REQUEST[self::FIELD_NAME]) ? wp_unslash($_REQUEST[self::FIELD_NAME]) : '';
+        return $this->get_request_value(self::FIELD_NAME);
+    }
+
+    private function is_specific_start_date_requested(): bool
+    {
+        $value = $this->get_request_value(self::CHECKBOX_NAME);
+
+        if (is_string($value) && $this->is_truthy_request_value($value)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @return mixed
+     */
+    private function get_request_value(string $key)
+    {
+        $direct_value = isset($_REQUEST[$key]) ? wp_unslash($_REQUEST[$key]) : '';
 
         if (is_string($direct_value) && '' !== trim($direct_value)) {
             return $direct_value;
@@ -126,49 +155,61 @@ class WSZ_Start_Date_Manager
 
         if (isset($_REQUEST['cart_item_data']) && is_array($_REQUEST['cart_item_data'])) {
             $cart_item_data = wp_unslash($_REQUEST['cart_item_data']);
-            $nested_value = $cart_item_data[self::FIELD_NAME] ?? '';
+            $nested_value = $cart_item_data[$key] ?? '';
 
             if (is_string($nested_value) && '' !== trim($nested_value)) {
                 return $nested_value;
             }
         }
 
-        if (isset($_REQUEST['form_data'])) {
-            $form_data = wp_unslash($_REQUEST['form_data']);
+        $form_value = $this->get_form_data_value($key);
 
-            if (is_string($form_data) && '' !== $form_data) {
-                $parsed = array();
-                parse_str($form_data, $parsed);
-
-                $value = isset($parsed[self::FIELD_NAME]) ? (string) $parsed[self::FIELD_NAME] : '';
-
-                if ('' !== trim($value)) {
-                    return $value;
-                }
-            } elseif (is_array($form_data)) {
-                foreach ($form_data as $entry) {
-                    if (!is_array($entry)) {
-                        continue;
-                    }
-
-                    if ((string) ($entry['name'] ?? '') !== self::FIELD_NAME) {
-                        continue;
-                    }
-
-                    $value = (string) ($entry['value'] ?? '');
-
-                    if ('' !== trim($value)) {
-                        return $value;
-                    }
-                }
-            }
+        if (is_string($form_value) && '' !== trim($form_value)) {
+            return $form_value;
         }
 
-        if (isset($_COOKIE[self::FIELD_NAME])) {
-            return sanitize_text_field(wp_unslash($_COOKIE[self::FIELD_NAME]));
+        if (isset($_COOKIE[$key])) {
+            return sanitize_text_field(wp_unslash($_COOKIE[$key]));
         }
 
         return '';
+    }
+
+    private function get_form_data_value(string $key): string
+    {
+        if (!isset($_REQUEST['form_data'])) {
+            return '';
+        }
+
+        $form_data = wp_unslash($_REQUEST['form_data']);
+
+        if (is_string($form_data) && '' !== $form_data) {
+            $parsed = array();
+            parse_str($form_data, $parsed);
+
+            return isset($parsed[$key]) ? (string) $parsed[$key] : '';
+        }
+
+        if (is_array($form_data)) {
+            foreach ($form_data as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+
+                if ((string) ($entry['name'] ?? '') !== $key) {
+                    continue;
+                }
+
+                return (string) ($entry['value'] ?? '');
+            }
+        }
+
+        return '';
+    }
+
+    private function is_truthy_request_value(string $value): bool
+    {
+        return in_array(strtolower(trim($value)), array('1', 'on', 'true', 'yes'), true);
     }
 
     public function render_ajax_start_date_bridge(): void
@@ -185,29 +226,64 @@ class WSZ_Start_Date_Manager
             }
 
             var fieldName = '<?php echo esc_js(self::FIELD_NAME); ?>';
+            var checkboxName = '<?php echo esc_js(self::CHECKBOX_NAME); ?>';
+            var $checkbox = $('input[name="' + checkboxName + '"]').first();
+            var $field = $('input[name="' + fieldName + '"]').first();
+            var $wrapper = $('.wsz-subscription-start-date-input').first();
+
+            function isSpecificDateEnabled() {
+                return $checkbox.length ? $checkbox.is(':checked') : false;
+            }
+
+            function getCookie(name) {
+                var cookieMatch = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+                return cookieMatch ? decodeURIComponent(cookieMatch[1]) : '';
+            }
 
             function getFieldValue() {
-                var $field = $('input[name="' + fieldName + '"]').first();
+                if (!isSpecificDateEnabled()) {
+                    return '';
+                }
+
                 var value = $field.length ? String($field.val() || '') : '';
 
                 if (value) {
                     return value;
                 }
 
-                var cookieMatch = document.cookie.match(new RegExp('(?:^|; )' + fieldName + '=([^;]*)'));
-                return cookieMatch ? decodeURIComponent(cookieMatch[1]) : '';
+                return getCookie(checkboxName) === 'yes' ? getCookie(fieldName) : '';
             }
 
-            function persistCookie(value) {
-                if (!value) {
-                    return;
+            function persistCookies(value) {
+                var enabled = isSpecificDateEnabled();
+
+                document.cookie = checkboxName + '=' + (enabled ? 'yes' : 'no') + '; path=/; max-age=86400; samesite=lax';
+
+                if (enabled && value) {
+                    document.cookie = fieldName + '=' + encodeURIComponent(value) + '; path=/; max-age=86400; samesite=lax';
+                } else {
+                    document.cookie = fieldName + '=; path=/; max-age=0; samesite=lax';
+                }
+            }
+
+            function syncFieldVisibility() {
+                var enabled = isSpecificDateEnabled();
+
+                if ($field.length) {
+                    $field.prop('disabled', !enabled);
                 }
 
-                document.cookie = fieldName + '=' + encodeURIComponent(value) + '; path=/; max-age=86400; samesite=lax';
+                if ($wrapper.length) {
+                    $wrapper.toggle(enabled);
+                }
+
+                persistCookies($field.length ? String($field.val() || '') : '');
             }
 
+            $checkbox.on('change', syncFieldVisibility);
+
             $(document).on('change', 'input[name="' + fieldName + '"]', function () {
-                persistCookie(String($(this).val() || ''));
+                persistCookies(String($(this).val() || ''));
             });
 
             $(document.body).on('adding_to_cart', function (event, $button, data) {
@@ -218,6 +294,7 @@ class WSZ_Start_Date_Manager
                 }
 
                 if (!data[fieldName]) {
+                    data[checkboxName] = 'yes';
                     data[fieldName] = value;
                 }
             });
@@ -237,9 +314,13 @@ class WSZ_Start_Date_Manager
                     return;
                 }
 
-                persistCookie(value);
+                persistCookies(value);
 
                 if (typeof options.data === 'string') {
+                    if (options.data.indexOf(checkboxName + '=') === -1) {
+                        options.data += (options.data ? '&' : '') + encodeURIComponent(checkboxName) + '=yes';
+                    }
+
                     if (options.data.indexOf(fieldName + '=') === -1) {
                         options.data += (options.data ? '&' : '') + encodeURIComponent(fieldName) + '=' + encodeURIComponent(value);
                     }
@@ -248,6 +329,7 @@ class WSZ_Start_Date_Manager
 
                 if (options.data && typeof options.data === 'object' && !Array.isArray(options.data)) {
                     if (!options.data[fieldName]) {
+                        options.data[checkboxName] = 'yes';
                         options.data[fieldName] = value;
                     }
                 }
@@ -255,8 +337,10 @@ class WSZ_Start_Date_Manager
 
             $(document).on('click submit', 'form.cart', function () {
                 var value = getFieldValue();
-                persistCookie(value);
+                persistCookies(value);
             });
+
+            syncFieldVisibility();
         })(window.jQuery);
         </script>
         <?php
@@ -381,6 +465,19 @@ class WSZ_Start_Date_Manager
         $timestamp = $date->setTime(0, 0, 0)->getTimestamp();
 
         return $timestamp > 0 ? $timestamp : 0;
+    }
+
+    private function get_minimum_selectable_date(): string
+    {
+        $current_timestamp = function_exists('current_time')
+            ? (int) current_time('timestamp', true)
+            : time();
+
+        $tomorrow_timestamp = $current_timestamp + (24 * 60 * 60);
+
+        return function_exists('wp_date')
+            ? wp_date('Y-m-d', $tomorrow_timestamp)
+            : gmdate('Y-m-d', $tomorrow_timestamp);
     }
 
     private function is_start_date_feature_enabled(): bool

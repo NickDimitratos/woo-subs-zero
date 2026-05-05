@@ -14,6 +14,7 @@ class WSZ_Product_Type_Manager
         add_filter('woocommerce_product_class', array($this, 'map_product_class'), 10, 2);
         add_filter('woocommerce_product_data_tabs', array($this, 'extend_product_data_tabs'));
         add_filter('woocommerce_is_virtual', array($this, 'filter_product_is_virtual'), 20, 2);
+        add_filter('woocommerce_is_sold_individually', array($this, 'force_subscription_products_sold_individually'), 20, 2);
         add_action('woocommerce_before_calculate_totals', array($this, 'apply_plan_total_installments'), 30);
 
         // Reuse WooCommerce add-to-cart renderers for WSZ custom product types on single product pages.
@@ -40,6 +41,20 @@ class WSZ_Product_Type_Manager
         }
 
         return $is_virtual;
+    }
+
+    /**
+     * Subscription products represent one recurring agreement, so quantity controls should not be shown.
+     *
+     * @param mixed $product
+     */
+    public function force_subscription_products_sold_individually(bool $sold_individually, $product): bool
+    {
+        if (!($product instanceof WC_Product)) {
+            return $sold_individually;
+        }
+
+        return $this->is_quantityless_subscription_product($product) ? true : $sold_individually;
     }
 
     public function render_wsz_simple_add_to_cart(): void
@@ -219,6 +234,33 @@ class WSZ_Product_Type_Manager
         }
 
         return 'yes' === $product->get_meta('_wsz_subscription_enabled', true);
+    }
+
+    private function is_quantityless_subscription_product(WC_Product $product): bool
+    {
+        $products_to_check = array($product);
+
+        $parent_product = $this->resolve_billing_source_product($product);
+
+        if ($parent_product instanceof WC_Product && $parent_product !== $product) {
+            $products_to_check[] = $parent_product;
+        }
+
+        foreach ($products_to_check as $candidate) {
+            if (in_array($candidate->get_type(), array('subscription', 'variable-subscription', self::SIMPLE_TYPE, self::VARIABLE_TYPE), true)) {
+                return true;
+            }
+
+            if (function_exists('wcs_is_subscription_product') && wcs_is_subscription_product($candidate)) {
+                return true;
+            }
+
+            if ('yes' === $candidate->get_meta('_wsz_subscription_enabled', true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function resolve_billing_source_product(WC_Product $product): ?WC_Product
