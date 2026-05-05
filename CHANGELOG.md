@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.23] - 2026-05-05
+
+### Fixed
+
+- Captured PAY.nl `action=token` exchange callbacks on PAY.nl's own WooCommerce exchange endpoint before the PAY.nl plugin ignores the token-only action.
+- Resolved PAY.nl token exchanges through the official PAY.nl transaction table mapping so `recurring_id` values can be linked back to WooCommerce parent orders and subscriptions.
+
+### Tests
+
+- Added PAY.nl token-exchange regression coverage for transaction-table order resolution and subscription token synchronization.
+
 ## [0.1.22] - 2026-05-05
 
 ### Added

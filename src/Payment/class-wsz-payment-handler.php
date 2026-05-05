@@ -22,7 +22,7 @@ class WSZ_Payment_Handler
         $this->test_card_gateway = new WSZ_Test_Card_Gateway_Integration();
         $this->test_card_gateway->init();
 
-        $this->paynl_gateway = new WSZ_PayNL_Gateway_Integration();
+        $this->paynl_gateway = new WSZ_PayNL_Gateway_Integration($this->subscription_manager);
         $this->paynl_gateway->init();
 
         $this->tokenized_gateway = new WSZ_Tokenized_Gateway($this->subscription_manager, $this);
