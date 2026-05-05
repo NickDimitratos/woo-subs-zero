@@ -50,7 +50,16 @@ class WSZ_Retry_Manager
             $normalized[] = array('interval' => $interval);
         }
 
-        return !empty($normalized) ? $normalized : $rules;
+        $rules = !empty($normalized) ? $normalized : $rules;
+        $test_interval = $this->get_test_retry_interval();
+
+        if ($test_interval > 0) {
+            foreach ($rules as $index => $rule) {
+                $rules[$index]['interval'] = $test_interval;
+            }
+        }
+
+        return $rules;
     }
 
     /**
@@ -80,6 +89,14 @@ class WSZ_Retry_Manager
         if ($next_attempt > count($rules)) {
             $this->update_retry_record($renewal_order, $next_attempt - 1, 'failed', 0, 'retry_rules_exhausted');
             $renewal_order->update_status('failed', __('Retry rules exhausted.', 'woo-subzero'));
+            $this->log_retry_event(
+                'warning',
+                __('Retry rules exhausted.', 'woo-subzero'),
+                $subscription,
+                $renewal_order,
+                $next_attempt - 1,
+                array('reason' => 'retry_rules_exhausted')
+            );
 
             $this->maybe_send_retry_email(
                 $subscription,
@@ -131,6 +148,20 @@ class WSZ_Retry_Manager
             );
         }
 
+        $this->log_retry_event(
+            'info',
+            __('Retry payment queued.', 'woo-subzero'),
+            $subscription,
+            $renewal_order,
+            $next_attempt,
+            array(
+                'scheduled_at' => $scheduled_at,
+                'interval' => (int) $rules[$next_attempt - 1]['interval'],
+                'reason' => $reason,
+                'test_mode' => $this->get_test_retry_interval() > 0 ? 'yes' : 'no',
+            )
+        );
+
         do_action('wsz_subs_retry_queued', $subscription, $renewal_order, $next_attempt, $scheduled_at);
 
         $this->maybe_send_retry_email($subscription, $renewal_order, $next_attempt, 'queued');
@@ -154,16 +185,40 @@ class WSZ_Retry_Manager
         try {
             if (!$this->is_retry_eligible($subscription, $renewal_order, $attempt)) {
                 $this->update_retry_record($renewal_order, $attempt, 'cancelled', 0, 'not_eligible');
+                $this->log_retry_event(
+                    'notice',
+                    __('Retry payment cancelled as ineligible.', 'woo-subzero'),
+                    $subscription,
+                    $renewal_order,
+                    $attempt,
+                    array('reason' => 'not_eligible')
+                );
                 return;
             }
 
             $this->update_retry_record($renewal_order, $attempt, 'processing', 0, 'processing');
+            $this->log_retry_event(
+                'info',
+                __('Retry payment processing started.', 'woo-subzero'),
+                $subscription,
+                $renewal_order,
+                $attempt,
+                array('amount' => (float) $renewal_order->get_total())
+            );
 
             $amount = (float) $renewal_order->get_total();
             $this->payment_handler->dispatch_scheduled_payment($subscription, $renewal_order, $amount);
 
             if ($renewal_order->is_paid()) {
                 $this->update_retry_record($renewal_order, $attempt, 'complete', 0, 'paid');
+                $this->log_retry_event(
+                    'info',
+                    __('Retry payment succeeded.', 'woo-subzero'),
+                    $subscription,
+                    $renewal_order,
+                    $attempt,
+                    array('reason' => 'paid')
+                );
 
                 $this->maybe_send_retry_email($subscription, $renewal_order, $attempt, 'paid');
 
@@ -182,9 +237,25 @@ class WSZ_Retry_Manager
 
             $this->update_retry_record($renewal_order, $attempt, 'failed', 0, 'payment_not_completed');
             $renewal_order->update_status('failed', sprintf(__('Retry %d failed.', 'woo-subzero'), $attempt));
+            $this->log_retry_event(
+                'warning',
+                __('Retry payment failed.', 'woo-subzero'),
+                $subscription,
+                $renewal_order,
+                $attempt,
+                array('reason' => 'payment_not_completed')
+            );
             $this->queue_retry($subscription, $renewal_order, sprintf('retry_%d_failed', $attempt));
         } catch (Throwable $throwable) {
             $this->update_retry_record($renewal_order, $attempt, 'failed', 0, $throwable->getMessage());
+            $this->log_retry_event(
+                'error',
+                __('Retry payment processing failed.', 'woo-subzero'),
+                $subscription,
+                $renewal_order,
+                $attempt,
+                array('reason' => $throwable->getMessage())
+            );
             wc_get_logger()->error(
                 sprintf('Retry processing failed for renewal order %d: %s', $order_id, $throwable->getMessage()),
                 array('source' => 'woo-subzero')
@@ -319,9 +390,56 @@ class WSZ_Retry_Manager
         $defaults = array(
             'enable_retry_emails_customer' => 'no',
             'enable_retry_emails_admin' => 'no',
+            'enable_test_mode' => 'no',
+            'test_cycle_minutes' => 1,
         );
 
         return wp_parse_args((array) get_option('wsz_subs_options', array()), $defaults);
+    }
+
+    private function get_test_retry_interval(): int
+    {
+        $options = $this->get_options();
+
+        if ('yes' !== $options['enable_test_mode']) {
+            return 0;
+        }
+
+        return max(1, (int) $options['test_cycle_minutes']) * 60;
+    }
+
+    private function log_retry_event(
+        string $level,
+        string $message,
+        WC_Order $subscription,
+        WC_Order $renewal_order,
+        int $attempt,
+        array $context = array()
+    ): void {
+        $context = array_merge(
+            array(
+                'source' => 'woo-subzero',
+                'subscription_id' => $subscription->get_id(),
+                'renewal_order_id' => $renewal_order->get_id(),
+                'attempt' => $attempt,
+            ),
+            $context
+        );
+
+        if (class_exists('WSZ_Admin_Settings')) {
+            WSZ_Admin_Settings::log_diagnostic($level, $message, $context);
+        }
+
+        if (!function_exists('wc_get_logger')) {
+            return;
+        }
+
+        $logger = wc_get_logger();
+        $level = sanitize_key($level);
+
+        if (is_object($logger) && is_callable(array($logger, $level))) {
+            $logger->{$level}($message, $context);
+        }
     }
 
     private function get_retry_records(WC_Order $renewal_order): array

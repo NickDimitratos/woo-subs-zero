@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.20] - 2026-05-05
+
+### Changed
+
+- In accelerated test mode, failed renewal payment retries now use the configured test cycle minutes instead of production retry delays.
+- Added retry lifecycle diagnostics for queued, processing, successful, failed, exhausted, and ineligible retry attempts.
+
+### Tests
+
+- Added retry, switching, early renewal, and scenario documentation coverage for subscription and renewal flows.
+
 ## [0.1.19] - 2026-05-05
 
 ### Fixed
