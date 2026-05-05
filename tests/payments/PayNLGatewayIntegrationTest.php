@@ -220,6 +220,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
     {
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $integration = new WSZ_PayNL_Gateway_Integration($subscription_manager);
+        $order_meta = array();
 
         $order = $this->createMock(WC_Order::class);
         $order->method('get_id')->willReturn(10486);
@@ -230,9 +231,13 @@ final class PayNLGatewayIntegrationTest extends TestCase
             ->with('_wsz_subscription_ids', true)
             ->willReturn(array(10487));
         $order
-            ->expects($this->once())
+            ->expects($this->exactly(4))
             ->method('update_meta_data')
-            ->with('_payment_token_id', $this->greaterThan(0));
+            ->willReturnCallback(
+                static function ($key, $value) use (&$order_meta): void {
+                    $order_meta[(string) $key] = $value;
+                }
+            );
         $order
             ->expects($this->once())
             ->method('add_payment_token')
@@ -270,11 +275,16 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
 
         $this->assertGreaterThan(0, $token_id);
+        $this->assertGreaterThan(0, $order_meta['_payment_token_id'] ?? 0);
+        $this->assertSame('VY-9212-9171-2390', $order_meta['_wsz_paynl_recurring_id'] ?? '');
+        $this->assertSame('recurring_id', $order_meta['_wsz_paynl_recurring_source'] ?? '');
+        $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
     }
 
     public function test_paynl_token_can_be_recovered_from_parent_order_meta(): void
     {
         $integration = new WSZ_PayNL_Gateway_Integration();
+        $order_meta = array();
 
         $order = $this->createMock(WC_Order::class);
         $order->method('get_id')->willReturn(10486);
@@ -291,9 +301,13 @@ final class PayNLGatewayIntegrationTest extends TestCase
                 )
             );
         $order
-            ->expects($this->once())
+            ->expects($this->exactly(4))
             ->method('update_meta_data')
-            ->with('_payment_token_id', $this->greaterThan(0));
+            ->willReturnCallback(
+                static function ($key, $value) use (&$order_meta): void {
+                    $order_meta[(string) $key] = $value;
+                }
+            );
         $order
             ->expects($this->once())
             ->method('add_payment_token')
@@ -305,5 +319,9 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $token_id = $integration->store_recurring_payment_token_from_order_meta($order);
 
         $this->assertGreaterThan(0, $token_id);
+        $this->assertGreaterThan(0, $order_meta['_payment_token_id'] ?? 0);
+        $this->assertSame('VY-9212-9171-2390', $order_meta['_wsz_paynl_recurring_id'] ?? '');
+        $this->assertSame('order_meta', $order_meta['_wsz_paynl_recurring_source'] ?? '');
+        $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
     }
 }

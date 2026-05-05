@@ -72,6 +72,9 @@ if (!function_exists('wc_get_order')) {
 }
 
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
+require_once dirname(__DIR__, 2) . '/includes/class-wsz-paynl-token-support.php';
+require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-payment-token.php';
+require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-gateway.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/class-wsz-payment-handler.php';
 
 final class PaymentMethodRecoveryTest extends TestCase
@@ -388,6 +391,70 @@ final class PaymentMethodRecoveryTest extends TestCase
         $this->assertSame($token, $handler->get_payment_token_for_subscription($subscription));
     }
 
+    public function test_get_payment_token_for_subscription_recovers_paynl_token_from_parent_order_meta(): void
+    {
+        $GLOBALS['wsz_subs_test_options']['enable_paynl_tokens'] = 'yes';
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+        $parent_order = new PaymentMethodRecoveryPayNLParentOrder(
+            10523,
+            9,
+            WSZ_PayNL_Gateway_Integration::GATEWAY_ID,
+            array(
+                array('key' => '_paynl_recurring_id', 'value' => 'VY-9212-9171-2390'),
+            )
+        );
+
+        $GLOBALS['wsz_subs_test_orders'][10523] = $parent_order;
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->method('get_customer_id')
+            ->willReturn(9);
+        $subscription
+            ->expects($this->once())
+            ->method('get_meta')
+            ->with('_wsz_parent_order_id', true)
+            ->willReturn(10523);
+        $subscription
+            ->method('get_payment_method')
+            ->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $subscription
+            ->expects($this->once())
+            ->method('set_payment_method')
+            ->with(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $subscription
+            ->expects($this->once())
+            ->method('save');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_payment_token_id')
+            ->with($subscription)
+            ->willReturn(0);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($parent_order, $subscription)
+            ->willReturn(false);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_payment_token_id')
+            ->with($subscription, $this->greaterThan(0));
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_manual_renewal')
+            ->with($subscription, false);
+
+        $token = $handler->get_payment_token_for_subscription($subscription);
+
+        $this->assertInstanceOf(WC_Payment_Token::class, $token);
+        $this->assertSame('VY-9212-9171-2390', $token->get_token('edit'));
+        $this->assertSame($token->get_id(), $parent_order->get_meta('_payment_token_id', true));
+        $this->assertCount(1, $parent_order->get_payment_tokens());
+    }
+
     public function test_sync_subscriptions_from_paid_parent_order_updates_linked_subscription_payment_context(): void
     {
         $GLOBALS['wsz_subs_test_options']['auto_restore_automatic_renewals'] = 'yes';
@@ -644,6 +711,79 @@ class PaymentMethodRecoveryOrderWithTokens extends WC_Order
     public function get_payment_tokens()
     {
         return array();
+    }
+}
+
+final class PaymentMethodRecoveryPayNLParentOrder extends WC_Order
+{
+    private int $id;
+
+    private int $customer_id;
+
+    private string $payment_method;
+
+    private array $meta_rows;
+
+    private array $meta = array();
+
+    private array $payment_tokens = array();
+
+    public function __construct(int $id, int $customer_id, string $payment_method, array $meta_rows)
+    {
+        $this->id = $id;
+        $this->customer_id = $customer_id;
+        $this->payment_method = $payment_method;
+        $this->meta_rows = $meta_rows;
+    }
+
+    public function get_id()
+    {
+        return $this->id;
+    }
+
+    public function get_customer_id()
+    {
+        return $this->customer_id;
+    }
+
+    public function get_payment_method()
+    {
+        return $this->payment_method;
+    }
+
+    public function get_meta($key, $single = true)
+    {
+        return $this->meta[$key] ?? '';
+    }
+
+    public function get_meta_data()
+    {
+        return $this->meta_rows;
+    }
+
+    public function update_meta_data($key, $value)
+    {
+        $this->meta[$key] = $value;
+    }
+
+    public function save()
+    {
+    }
+
+    public function add_payment_token($token)
+    {
+        if (!($token instanceof WC_Payment_Token)) {
+            return false;
+        }
+
+        $this->payment_tokens[(int) $token->get_id()] = $token;
+
+        return $token->get_id();
+    }
+
+    public function get_payment_tokens()
+    {
+        return array_values($this->payment_tokens);
     }
 }
 

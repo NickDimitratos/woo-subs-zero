@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.30] - 2026-05-05
+
+### Fixed
+
+- Recovered PAY.nl recurring tokens just-in-time from parent order payment metadata when an active subscription reaches renewal without a stored WooCommerce payment token.
+- Cached normalized PAY.nl recurring references on parent orders using `_wsz_paynl_recurring_id`, `_wsz_paynl_recurring_source`, and `_wsz_paynl_recurring_captured_at` for renewal recovery.
+- Prevented subscription status hook format exceptions from escaping failed renewal processing and masking the underlying missing-token failure.
+- Added parent-order token and PAY.nl recurring metadata diagnostics to missing-token renewal logs.
+
+### Tests
+
+- Added regression coverage for PAY.nl parent-order token recovery during renewal token lookup and failed renewal retry queuing when subscription status hooks throw `Unknown format specifier ","`.
+
 ## [0.1.29] - 2026-05-05
 
 ### Fixed

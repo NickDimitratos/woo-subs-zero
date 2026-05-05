@@ -13,6 +13,7 @@ final class WebhookIdempotencyTest extends TestCase
     {
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $handler = new WSZ_Webhook_Handler($subscription_manager);
+        $order_meta = array();
 
         $order = $this->createMock(WC_Order::class);
         $order->method('get_id')->willReturn(77);
@@ -130,9 +131,13 @@ final class WebhookIdempotencyTest extends TestCase
             ->willReturn(array(10473));
 
         $order
-            ->expects($this->once())
+            ->expects($this->exactly(4))
             ->method('update_meta_data')
-            ->with('_payment_token_id', $this->greaterThan(0));
+            ->willReturnCallback(
+                static function ($key, $value) use (&$order_meta): void {
+                    $order_meta[(string) $key] = $value;
+                }
+            );
 
         $order
             ->expects($this->once())
@@ -177,5 +182,9 @@ final class WebhookIdempotencyTest extends TestCase
         );
 
         $this->assertGreaterThan(0, $token_id);
+        $this->assertGreaterThan(0, $order_meta['_payment_token_id'] ?? 0);
+        $this->assertSame('VY-9212-9171-2390', $order_meta['_wsz_paynl_recurring_id'] ?? '');
+        $this->assertSame('recurring_id', $order_meta['_wsz_paynl_recurring_source'] ?? '');
+        $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
     }
 }

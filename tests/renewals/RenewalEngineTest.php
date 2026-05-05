@@ -1152,6 +1152,93 @@ final class RenewalEngineTest extends TestCase
         $engine->process_renewal(901, '');
     }
 
+    public function test_failed_renewal_queues_retry_when_subscription_status_transition_hooks_throw(): void
+    {
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10524);
+        $subscription->method('get_status')->willReturn('active');
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_order->method('get_id')->willReturn(10525);
+        $renewal_order
+            ->expects($this->exactly(2))
+            ->method('get_total')
+            ->willReturn(10.0);
+        $renewal_order
+            ->expects($this->once())
+            ->method('is_paid')
+            ->willReturn(false);
+        $renewal_order
+            ->expects($this->once())
+            ->method('has_status')
+            ->with(array('failed'))
+            ->willReturn(false);
+        $renewal_order
+            ->expects($this->once())
+            ->method('update_status')
+            ->with('failed', $this->stringContains('Scheduled renewal payment failed.'));
+
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $renewal_order;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(10524)
+            ->willReturn($subscription);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_next_payment_timestamp')
+            ->with($subscription)
+            ->willReturn(current_time('timestamp', true) + 60);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_total_payments')
+            ->with($subscription)
+            ->willReturn(0);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_end_timestamp')
+            ->with($subscription)
+            ->willReturn(0);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('acquire_lock')
+            ->with('renewal', 10524, 300)
+            ->willReturn(true);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('is_manual_renewal')
+            ->with($subscription)
+            ->willReturn(false);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('transition_status')
+            ->with($subscription, 'on-hold', $this->stringContains('Renewal payment failed.'))
+            ->willThrowException(new ValueError('Unknown format specifier ","'));
+        $subscription_manager
+            ->expects($this->once())
+            ->method('release_lock')
+            ->with('renewal', 10524);
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $payment_handler
+            ->expects($this->once())
+            ->method('dispatch_scheduled_payment')
+            ->with($subscription, $renewal_order, 10.0);
+
+        $retry_manager = $this->createMock(WSZ_Retry_Manager::class);
+        $retry_manager
+            ->expects($this->once())
+            ->method('queue_retry')
+            ->with($subscription, $renewal_order, 'renewal_failed');
+
+        $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
+        $engine->process_renewal(10524, '');
+    }
+
     public function test_create_renewal_order_hydrates_incomplete_wcs_order_in_place(): void
     {
         $subscription_item = new class {

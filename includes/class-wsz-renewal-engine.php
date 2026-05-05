@@ -238,10 +238,14 @@ class WSZ_Renewal_Engine
             }
 
             if ('active' === $subscription->get_status()) {
-                $this->subscription_manager->transition_status(
+                $this->safe_transition_subscription_status(
                     $subscription,
                     'on-hold',
-                    __('Renewal payment failed.', 'woo-subzero')
+                    __('Renewal payment failed.', 'woo-subzero'),
+                    array(
+                        'renewal_order_id' => $renewal_order->get_id(),
+                        'reason' => 'renewal_payment_failed',
+                    )
                 );
             }
 
@@ -1001,6 +1005,35 @@ class WSZ_Renewal_Engine
             if (function_exists('wc_get_logger')) {
                 wc_get_logger()->warning(
                     sprintf('Failed to mark renewal order %d as %s: %s', $renewal_order->get_id(), $status, $throwable->getMessage()),
+                    array('source' => 'woo-subzero')
+                );
+            }
+        }
+    }
+
+    private function safe_transition_subscription_status(
+        WC_Order $subscription,
+        string $status,
+        string $note,
+        array $context = array()
+    ): void {
+        try {
+            $this->subscription_manager->transition_status($subscription, $status, $note);
+        } catch (Throwable $throwable) {
+            $this->log_diagnostic(
+                'warning',
+                __('Subscription status update failed after renewal processing.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'target_status' => sanitize_key($status),
+                    'status_update_reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                ) + $context
+            );
+
+            if (function_exists('wc_get_logger')) {
+                wc_get_logger()->warning(
+                    sprintf('Failed to mark subscription %d as %s: %s', $subscription->get_id(), $status, $throwable->getMessage()),
                     array('source' => 'woo-subzero')
                 );
             }
