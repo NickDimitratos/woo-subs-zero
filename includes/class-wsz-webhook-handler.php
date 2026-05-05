@@ -284,6 +284,11 @@ class WSZ_Webhook_Handler
         }
 
         $order->update_meta_data('_payment_token_id', $token_id);
+        WSZ_PayNL_Token_Support::cache_recurring_id_on_order(
+            $order,
+            $recurring_id,
+            $this->resolve_recurring_cache_source($payload)
+        );
         WSZ_Subscription_Manager::attach_payment_token_to_order($order, $token_id);
         $order->save();
         $this->sync_token_to_order_subscriptions($order, $gateway_id, $token_id);
@@ -321,6 +326,21 @@ class WSZ_Webhook_Handler
         }
 
         return 0;
+    }
+
+    private function resolve_recurring_cache_source(array $payload): string
+    {
+        $source = isset($payload['source']) && is_scalar($payload['source'])
+            ? sanitize_key((string) $payload['source'])
+            : '';
+
+        if ('' !== $source) {
+            return $source;
+        }
+
+        $source = WSZ_PayNL_Token_Support::extract_recurring_id_source_key($payload);
+
+        return '' !== $source ? $source : 'paynl_token_exchange';
     }
 
     private function sync_token_to_order_subscriptions(WC_Order $order, string $gateway_id, int $token_id): void

@@ -124,14 +124,58 @@ class WSZ_PayNL_Token_Support
 
     public static function extract_recurring_id_from_order_meta(WC_Order $order): string
     {
-        if (!is_callable(array($order, 'get_meta_data'))) {
+        $meta_row = self::get_recurring_id_meta_row($order);
+
+        if (null === $meta_row) {
             return '';
+        }
+
+        $meta_key = self::normalize_key(self::get_meta_row_key($meta_row));
+        $recurring_id = self::extract_recurring_id_from_meta_value($meta_key, self::get_meta_row_value($meta_row));
+
+        return '' !== $recurring_id ? $recurring_id : '';
+    }
+
+    public static function extract_recurring_id_meta_source_key(WC_Order $order): string
+    {
+        $meta_row = self::get_recurring_id_meta_row($order);
+
+        return null === $meta_row ? '' : self::normalize_key(self::get_meta_row_key($meta_row));
+    }
+
+    public static function cache_recurring_id_on_order(WC_Order $order, string $recurring_id, string $source = ''): void
+    {
+        $recurring_id = sanitize_text_field($recurring_id);
+
+        if ('' === $recurring_id || !is_callable(array($order, 'update_meta_data'))) {
+            return;
+        }
+
+        $source = sanitize_key($source);
+
+        if ('' === $source) {
+            $source = 'paynl_token_exchange';
+        }
+
+        $captured_at = function_exists('current_time')
+            ? (string) current_time('mysql', true)
+            : gmdate('Y-m-d H:i:s');
+
+        $order->update_meta_data('_wsz_paynl_recurring_id', $recurring_id);
+        $order->update_meta_data('_wsz_paynl_recurring_source', $source);
+        $order->update_meta_data('_wsz_paynl_recurring_captured_at', $captured_at);
+    }
+
+    private static function get_recurring_id_meta_row(WC_Order $order)
+    {
+        if (!is_callable(array($order, 'get_meta_data'))) {
+            return null;
         }
 
         $meta_rows = $order->get_meta_data();
 
         if (!is_array($meta_rows)) {
-            return '';
+            return null;
         }
 
         foreach ($meta_rows as $meta_row) {
@@ -144,11 +188,11 @@ class WSZ_PayNL_Token_Support
             $recurring_id = self::extract_recurring_id_from_meta_value($meta_key, self::get_meta_row_value($meta_row));
 
             if ('' !== $recurring_id) {
-                return $recurring_id;
+                return $meta_row;
             }
         }
 
-        return '';
+        return null;
     }
 
     /**

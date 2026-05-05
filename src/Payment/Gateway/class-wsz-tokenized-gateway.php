@@ -279,7 +279,85 @@ class WSZ_Tokenized_Gateway
             'subscription_parent_order_id' => $this->get_order_parent_id($subscription),
             'subscription_parent_order_meta_id' => (int) $subscription->get_meta('_wsz_parent_order_id', true),
             'renewal_order_parent_id' => $this->get_order_parent_id($renewal_order),
-        ) + $this->get_customer_token_context($customer_id, $gateway_id);
+        ) + $this->get_parent_order_payment_context($subscription) + $this->get_customer_token_context($customer_id, $gateway_id);
+    }
+
+    private function get_parent_order_payment_context(WC_Order $subscription): array
+    {
+        $parent_order = $this->resolve_parent_order_for_context($subscription);
+
+        if (!($parent_order instanceof WC_Order)) {
+            return array('parent_order_resolved' => 'no');
+        }
+
+        $context = array(
+            'parent_order_resolved' => 'yes',
+            'parent_order_id' => $parent_order->get_id(),
+            'parent_order_payment_method' => sanitize_key((string) $parent_order->get_payment_method()),
+            'parent_order_token_meta' => $parent_order->get_meta('_payment_token_id', true),
+        );
+
+        if (is_callable(array($parent_order, 'get_payment_tokens'))) {
+            $tokens = $parent_order->get_payment_tokens();
+            $context += $this->summarize_order_tokens(is_array($tokens) ? $tokens : array(), 'parent_order');
+        }
+
+        if (
+            class_exists('WSZ_PayNL_Token_Support')
+            && is_callable(array('WSZ_PayNL_Token_Support', 'extract_recurring_id_meta_source_key'))
+        ) {
+            $recurring_source_key = WSZ_PayNL_Token_Support::extract_recurring_id_meta_source_key($parent_order);
+            $context['parent_order_has_paynl_recurring_meta'] = '' !== $recurring_source_key ? 'yes' : 'no';
+
+            if ('' !== $recurring_source_key) {
+                $context['parent_order_paynl_recurring_meta_source_key'] = $recurring_source_key;
+            }
+        }
+
+        return $context;
+    }
+
+    private function resolve_parent_order_for_context(WC_Order $subscription): ?WC_Order
+    {
+        $parent_order_id = (int) $subscription->get_meta('_wsz_parent_order_id', true);
+
+        if ($parent_order_id <= 0 && is_callable(array($subscription, 'get_parent_id'))) {
+            $parent_order_id = (int) $subscription->get_parent_id();
+        }
+
+        if ($parent_order_id <= 0 || !function_exists('wc_get_order')) {
+            return null;
+        }
+
+        $parent_order = wc_get_order($parent_order_id);
+
+        return $parent_order instanceof WC_Order ? $parent_order : null;
+    }
+
+    private function summarize_order_tokens(array $tokens, string $prefix): array
+    {
+        $token_ids = array();
+        $token_classes = array();
+
+        foreach ($tokens as $token) {
+            if (is_numeric($token)) {
+                $token_ids[] = max(0, (int) $token);
+                continue;
+            }
+
+            if (!($token instanceof WC_Payment_Token)) {
+                continue;
+            }
+
+            $token_ids[] = max(0, (int) $token->get_id());
+            $token_classes[] = get_class($token);
+        }
+
+        return array(
+            $prefix . '_payment_token_count' => count($tokens),
+            $prefix . '_payment_token_ids' => array_values(array_filter(array_unique($token_ids))),
+            $prefix . '_payment_token_classes' => array_values(array_unique($token_classes)),
+        );
     }
 
     private function get_customer_token_context(int $customer_id, string $gateway_id): array

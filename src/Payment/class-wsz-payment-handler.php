@@ -182,6 +182,10 @@ class WSZ_Payment_Handler
         $token_id = $this->subscription_manager->get_payment_token_id($subscription);
 
         if ($token_id <= 0) {
+            $token_id = $this->resolve_token_id_from_parent_order_context($subscription);
+        }
+
+        if ($token_id <= 0) {
             $token_id = $this->resolve_fallback_token_id($subscription);
 
             if ($token_id > 0) {
@@ -778,6 +782,36 @@ class WSZ_Payment_Handler
         $gateway_id = sanitize_key((string) $subscription->get_payment_method());
 
         return $this->resolve_fallback_token_id_for_gateway($subscription, $gateway_id);
+    }
+
+    private function resolve_token_id_from_parent_order_context(WC_Order $subscription): int
+    {
+        $parent_order = $this->resolve_parent_order($subscription);
+
+        if (!($parent_order instanceof WC_Order)) {
+            return 0;
+        }
+
+        $this->subscription_manager->copy_payment_context_meta($parent_order, $subscription);
+
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+        $parent_gateway_id = sanitize_key((string) $parent_order->get_payment_method());
+
+        if ('' === $gateway_id) {
+            $gateway_id = $parent_gateway_id;
+        }
+
+        $token_id = $this->resolve_token_id_from_order($parent_order);
+
+        if ($token_id <= 0) {
+            $token_id = $this->recover_paynl_token_id_from_order_meta($parent_order);
+        }
+
+        if ($token_id > 0) {
+            $this->update_subscription_payment_context($subscription, $token_id, $gateway_id);
+        }
+
+        return $token_id;
     }
 
     private function resolve_fallback_token_id_for_gateway(WC_Order $subscription, string $gateway_id): int
