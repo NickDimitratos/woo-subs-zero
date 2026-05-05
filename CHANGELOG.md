@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.14] - 2026-05-05
+
+### Added
+
+- Added an Error Logs tab to WooCommerce > WSZ Subscriptions for viewing Woo Subs-Zero diagnostics and WooCommerce logger entries.
+- Added source, severity, and limit filters plus a clear action for plugin diagnostic logs.
+- Added diagnostic logging around renewal order creation, recurring payment dispatch, token validation, gateway fallback, and recurring charge failures.
+
+### Tests
+
+- Added admin settings regression coverage for diagnostic log rendering, filtering, and clearing.
+
 ## [0.1.13] - 2026-05-04
 
 ### Fixed
