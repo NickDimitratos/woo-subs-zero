@@ -288,8 +288,7 @@ class WSZ_Payment_Handler
         } elseif ($new_payment_method instanceof WC_Order) {
             $gateway_id = sanitize_key((string) $subscription->get_payment_method());
             if ($token_id <= 0) {
-                $order_token = $new_payment_method->get_meta('_payment_token_id', true);
-                $token_id = is_numeric($order_token) ? (int) $order_token : 0;
+                $token_id = $this->resolve_token_id_from_order($new_payment_method);
             }
         }
 
@@ -355,11 +354,7 @@ class WSZ_Payment_Handler
             return;
         }
 
-        $token_id = 0;
-        $renewal_order_token = $renewal_order->get_meta('_payment_token_id', true);
-        if (is_numeric($renewal_order_token)) {
-            $token_id = (int) $renewal_order_token;
-        }
+        $token_id = $this->resolve_token_id_from_order($renewal_order);
 
         $this->update_subscription_payment_context($subscription, $token_id, $gateway_id);
     }

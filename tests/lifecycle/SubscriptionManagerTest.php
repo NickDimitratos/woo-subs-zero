@@ -80,6 +80,10 @@ final class SubscriptionManagerTest extends TestCase
 
         $GLOBALS['wsz_subs_test_options'] = array();
         $GLOBALS['wsz_subs_test_orders'] = array();
+
+        if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
+            WC_Payment_Tokens::reset_test_tokens();
+        }
     }
 
     public function test_valid_transition_matrix_accepts_expected_routes(): void
@@ -554,10 +558,42 @@ final class SubscriptionManagerTest extends TestCase
         );
     }
 
+    public function test_set_payment_token_id_attaches_woocommerce_payment_token(): void
+    {
+        $manager = new WSZ_Subscription_Manager();
+        $token = new WC_Payment_Token();
+        $token->set_token('tok_123');
+        $token->set_gateway_id('pay_gateway');
+        $token->set_user_id(12);
+        $token->save();
+
+        $token_id = (int) $token->get_id();
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_customer_id')->willReturn(12);
+        $subscription->method('get_payment_tokens')->willReturn(array());
+        $subscription
+            ->expects($this->once())
+            ->method('update_meta_data')
+            ->with('_payment_token_id', $token_id);
+        $subscription
+            ->expects($this->once())
+            ->method('add_payment_token')
+            ->with($token);
+        $subscription
+            ->expects($this->once())
+            ->method('save');
+
+        $manager->set_payment_token_id($subscription, $token_id);
+    }
+
     public function test_copy_payment_context_meta_copies_order_payment_token_objects(): void
     {
         $manager = new WSZ_Subscription_Manager();
         $source = $this->createMock(SubscriptionManagerOrderWithPaymentTokens::class);
+        $token = new SubscriptionManagerPaymentToken(987);
+
+        WC_Payment_Tokens::set_test_tokens(array(987 => $token));
 
         $source
             ->expects($this->once())
@@ -567,13 +603,18 @@ final class SubscriptionManagerTest extends TestCase
         $source
             ->expects($this->once())
             ->method('get_payment_tokens')
-            ->willReturn(array(new SubscriptionManagerPaymentToken(987)));
+            ->willReturn(array($token));
 
         $target = $this->createMock(WC_Order::class);
+        $target->method('get_payment_tokens')->willReturn(array());
         $target
             ->expects($this->once())
             ->method('update_meta_data')
             ->with('_payment_token_id', 987);
+        $target
+            ->expects($this->once())
+            ->method('add_payment_token')
+            ->with($token);
 
         $this->assertTrue($manager->copy_payment_context_meta($source, $target));
     }

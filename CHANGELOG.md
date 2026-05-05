@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.29] - 2026-05-05
+
+### Fixed
+
+- Associated reusable payment tokens with parent orders, subscriptions, and renewal orders through WooCommerce's order payment-token API while keeping `_payment_token_id` compatibility metadata.
+- Resolved renewal and failing-payment recovery token IDs from WooCommerce order token relationships when compatibility metadata is missing.
+
+### Tests
+
+- Added regression coverage for WooCommerce-native payment token attachment during PAY.nl token capture, webhook token capture, subscription token sync, and renewal order creation.
+
 ## [0.1.28] - 2026-05-05
 
 ### Fixed

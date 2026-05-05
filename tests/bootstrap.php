@@ -174,6 +174,8 @@ if (!function_exists('wc_format_decimal')) {
 if (!class_exists('WC_Order')) {
     class WC_Order
     {
+        private array $payment_tokens = array();
+
         public function update_status($status, $note = '', $manual = false)
         {
         }
@@ -302,6 +304,28 @@ if (!class_exists('WC_Order')) {
         {
             return 'shop_order';
         }
+
+        public function add_payment_token($token)
+        {
+            if (!($token instanceof WC_Payment_Token)) {
+                return false;
+            }
+
+            $token_id = (int) $token->get_id();
+
+            if ($token_id <= 0) {
+                return false;
+            }
+
+            $this->payment_tokens[$token_id] = $token;
+
+            return $token_id;
+        }
+
+        public function get_payment_tokens()
+        {
+            return array_values($this->payment_tokens);
+        }
     }
 }
 
@@ -364,6 +388,10 @@ if (!class_exists('WC_Payment_Token')) {
                 $this->id = self::$next_id++;
             }
 
+            if (class_exists('WC_Payment_Tokens') && is_callable(array('WC_Payment_Tokens', 'register_test_token'))) {
+                WC_Payment_Tokens::register_test_token($this);
+            }
+
             return $this->id;
         }
     }
@@ -386,6 +414,26 @@ if (!class_exists('WC_Payment_Tokens')) {
         {
             self::$tokens = $tokens;
             self::$customer_tokens = $customer_tokens;
+        }
+
+        public static function register_test_token(WC_Payment_Token $token): void
+        {
+            $token_id = (int) $token->get_id();
+
+            if ($token_id <= 0) {
+                return;
+            }
+
+            self::$tokens[$token_id] = $token;
+
+            $customer_id = (int) $token->get_user_id();
+            $gateway_id = (string) $token->get_gateway_id();
+
+            if ($customer_id <= 0 || '' === $gateway_id) {
+                return;
+            }
+
+            self::$customer_tokens[$customer_id . '|' . $gateway_id][$token_id] = $token;
         }
 
         public static function get($token_id)

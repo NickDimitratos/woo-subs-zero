@@ -811,7 +811,13 @@ class WSZ_Subscription_Manager
             return;
         }
 
-        $subscription->update_meta_data('_payment_token_id', max(0, $token_id));
+        $token_id = max(0, $token_id);
+        $subscription->update_meta_data('_payment_token_id', $token_id);
+
+        if ($token_id > 0) {
+            self::attach_payment_token_to_order($subscription, $token_id);
+        }
+
         $subscription->save();
     }
 
@@ -822,6 +828,36 @@ class WSZ_Subscription_Manager
         }
 
         return (int) $subscription->get_meta('_payment_token_id', true);
+    }
+
+    public static function attach_payment_token_to_order(WC_Order $order, int $token_id): bool
+    {
+        $token_id = max(0, $token_id);
+
+        if (
+            $token_id <= 0
+            || !is_callable(array($order, 'add_payment_token'))
+            || !class_exists('WC_Payment_Tokens')
+            || !is_callable(array('WC_Payment_Tokens', 'get'))
+        ) {
+            return false;
+        }
+
+        $token = WC_Payment_Tokens::get($token_id);
+
+        if (!($token instanceof WC_Payment_Token)) {
+            return false;
+        }
+
+        if (!self::order_can_use_payment_token($order, $token)) {
+            return false;
+        }
+
+        if (self::order_has_payment_token($order, $token_id)) {
+            return true;
+        }
+
+        return false !== $order->add_payment_token($token);
     }
 
     public function add_related_order($subscription, int $order_id, string $relationship): void
@@ -1506,6 +1542,7 @@ class WSZ_Subscription_Manager
 
         $copied = false;
         $copied_token_id = false;
+        $payment_token_id = 0;
         $meta_rows = $source->get_meta_data();
 
         if (!is_array($meta_rows)) {
@@ -1519,11 +1556,13 @@ class WSZ_Subscription_Manager
                 continue;
             }
 
-            $target->update_meta_data($key, $this->get_meta_row_value($meta_row));
+            $value = $this->get_meta_row_value($meta_row);
+            $target->update_meta_data($key, $value);
             $copied = true;
 
             if ('_payment_token_id' === $key) {
                 $copied_token_id = true;
+                $payment_token_id = is_numeric($value) ? max(0, (int) $value) : 0;
             }
         }
 
@@ -1532,11 +1571,49 @@ class WSZ_Subscription_Manager
 
             if ($token_id > 0) {
                 $target->update_meta_data('_payment_token_id', $token_id);
+                $payment_token_id = $token_id;
                 $copied = true;
             }
         }
 
+        if ($payment_token_id > 0) {
+            self::attach_payment_token_to_order($target, $payment_token_id);
+        }
+
         return $copied;
+    }
+
+    private static function order_can_use_payment_token(WC_Order $order, WC_Payment_Token $token): bool
+    {
+        $customer_id = (int) $order->get_customer_id();
+        $token_customer_id = (int) $token->get_user_id();
+
+        return $customer_id <= 0 || $customer_id === $token_customer_id;
+    }
+
+    private static function order_has_payment_token(WC_Order $order, int $token_id): bool
+    {
+        if (!is_callable(array($order, 'get_payment_tokens'))) {
+            return false;
+        }
+
+        $tokens = $order->get_payment_tokens();
+
+        if (!is_array($tokens) || empty($tokens)) {
+            return false;
+        }
+
+        foreach ($tokens as $token) {
+            if (is_numeric($token) && $token_id === (int) $token) {
+                return true;
+            }
+
+            if ($token instanceof WC_Payment_Token && $token_id === (int) $token->get_id()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function resolve_payment_token_id_from_order(WC_Order $order): int

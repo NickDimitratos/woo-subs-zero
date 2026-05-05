@@ -142,6 +142,10 @@ final class RenewalEngineTest extends TestCase
         $GLOBALS['wsz_test_wc_created_order'] = null;
         $GLOBALS['wsz_test_orders'] = array();
         $GLOBALS['wsz_test_card_orders'] = array();
+
+        if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
+            WC_Payment_Tokens::reset_test_tokens();
+        }
     }
 
     protected function tearDown(): void
@@ -1400,6 +1404,47 @@ final class RenewalEngineTest extends TestCase
         $this->assertSame('Maria', $renewal_order->get_billing_first_name());
         $this->assertSame('maria@example.com', $renewal_order->get_billing_email());
         $this->assertSame('Delivery Road 9', $renewal_order->get_shipping_address_1());
+    }
+
+    public function test_copy_resolved_payment_token_attaches_wc_token_to_renewal_order(): void
+    {
+        $token = new WC_Payment_Token();
+        $token->set_token('tok_renewal');
+        $token->set_gateway_id('pay_gateway');
+        $token->set_user_id(22);
+        $token->save();
+
+        $token_id = (int) $token->get_id();
+        $subscription = $this->createMock(WC_Order::class);
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_order->method('get_customer_id')->willReturn(22);
+        $renewal_order->method('get_payment_tokens')->willReturn(array());
+        $renewal_order
+            ->expects($this->once())
+            ->method('update_meta_data')
+            ->with('_payment_token_id', $token_id);
+        $renewal_order
+            ->expects($this->once())
+            ->method('add_payment_token')
+            ->with($token);
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $payment_handler
+            ->expects($this->once())
+            ->method('get_payment_token_for_subscription')
+            ->with($subscription)
+            ->willReturn($token);
+        $retry_manager = $this->createMock(WSZ_Retry_Manager::class);
+
+        $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
+        $method = new ReflectionMethod(WSZ_Renewal_Engine::class, 'copy_resolved_payment_token_to_renewal');
+        $method->setAccessible(true);
+
+        $method->invoke($engine, $subscription, $renewal_order);
     }
 
     private function create_test_line_item()
