@@ -151,6 +151,11 @@ class WSZ_Renewal_Engine
             $renewal_order = $this->create_renewal_order($subscription);
 
             if (!($renewal_order instanceof WC_Order)) {
+                $this->log_diagnostic(
+                    'error',
+                    __('Unable to create renewal order for subscription.', 'woo-subzero'),
+                    array('subscription_id' => $subscription_id)
+                );
                 wc_get_logger()->error(
                     sprintf('Unable to create renewal order for subscription %d.', $subscription_id),
                     array('source' => 'woo-subzero')
@@ -238,6 +243,11 @@ class WSZ_Renewal_Engine
             $this->retry_manager->queue_retry($subscription, $renewal_order, 'renewal_failed');
             do_action('wsz_subs_renewal_payment_failed', $subscription, $renewal_order);
         } catch (Throwable $throwable) {
+            $this->log_diagnostic(
+                'error',
+                $throwable->getMessage(),
+                array('subscription_id' => $subscription_id)
+            );
             wc_get_logger()->error(
                 sprintf('Renewal processing failed for subscription %d: %s', $subscription_id, $throwable->getMessage()),
                 array('source' => 'woo-subzero')
@@ -958,5 +968,15 @@ class WSZ_Renewal_Engine
         );
 
         do_action('wsz_subs_test_cycle_notification', $subscription, $next_payment_timestamp, $cycle_minutes);
+    }
+
+    private function log_diagnostic(string $level, string $message, array $context = array()): void
+    {
+        if (!class_exists('WSZ_Admin_Settings')) {
+            return;
+        }
+
+        $context['source'] = 'woo-subzero';
+        WSZ_Admin_Settings::log_diagnostic($level, $message, $context);
     }
 }

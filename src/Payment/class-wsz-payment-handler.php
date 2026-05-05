@@ -79,6 +79,15 @@ class WSZ_Payment_Handler
             $subscription->update_meta_data('_wsz_manual_renewal_fallback_reason', 'gateway_unavailable');
             $subscription->save();
             $this->subscription_manager->set_manual_renewal($subscription, true);
+            $this->log_diagnostic(
+                'warning',
+                __('Payment gateway unavailable. Subscription switched to manual renewal.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'gateway_id' => $gateway_id,
+                )
+            );
             $renewal_order->update_status(
                 'pending',
                 __('Payment gateway unavailable. Subscription switched to manual renewal.', 'woo-subzero')
@@ -179,6 +188,15 @@ class WSZ_Payment_Handler
                 sprintf('Payment token ownership mismatch for subscription %d.', $subscription->get_id()),
                 array('source' => 'woo-subzero')
             );
+            $this->log_diagnostic(
+                'warning',
+                __('Payment token ownership mismatch for subscription.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'payment_token_id' => $token->get_id(),
+                    'customer_id' => $customer_id,
+                )
+            );
 
             return null;
         }
@@ -210,6 +228,14 @@ class WSZ_Payment_Handler
             wc_get_logger()->warning(
                 sprintf('Ignoring unknown WooCommerce gateway id "%s" for subscription %d.', $gateway_id, $subscription->get_id()),
                 array('source' => 'woo-subzero')
+            );
+            $this->log_diagnostic(
+                'warning',
+                __('Ignoring unknown WooCommerce gateway id for subscription.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'gateway_id' => $gateway_id,
+                )
             );
         }
 
@@ -618,5 +644,15 @@ class WSZ_Payment_Handler
             : 'yes';
 
         return 'yes' === $value;
+    }
+
+    private function log_diagnostic(string $level, string $message, array $context = array()): void
+    {
+        if (!class_exists('WSZ_Admin_Settings')) {
+            return;
+        }
+
+        $context['source'] = 'woo-subzero';
+        WSZ_Admin_Settings::log_diagnostic($level, $message, $context);
     }
 }

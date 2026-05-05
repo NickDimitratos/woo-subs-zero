@@ -82,6 +82,11 @@ class WSZ_Tokenized_Gateway
         $subscription = $this->resolve_subscription_from_renewal_order($renewal_order);
 
         if (!($subscription instanceof WC_Order)) {
+            $this->log_diagnostic(
+                'error',
+                __('Could not resolve source subscription for renewal.', 'woo-subzero'),
+                array('renewal_order_id' => $renewal_order->get_id())
+            );
             $renewal_order->update_status('failed', __('Could not resolve source subscription for renewal.', 'woo-subzero'));
             return;
         }
@@ -89,12 +94,29 @@ class WSZ_Tokenized_Gateway
         $token = $this->payment_handler->get_payment_token_for_subscription($subscription);
 
         if (!($token instanceof WC_Payment_Token)) {
+            $this->log_diagnostic(
+                'error',
+                __('Missing or invalid payment token for renewal.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                )
+            );
             $renewal_order->update_status('failed', __('Missing or invalid payment token for renewal.', 'woo-subzero'));
             return;
         }
 
         $recurring_id = (string) $token->get_token();
         if ('' === $recurring_id) {
+            $this->log_diagnostic(
+                'error',
+                __('Recurring reference is empty for payment token.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'payment_token_id' => $token->get_id(),
+                )
+            );
             $renewal_order->update_status('failed', __('Recurring reference is empty for payment token.', 'woo-subzero'));
             return;
         }
@@ -115,6 +137,16 @@ class WSZ_Tokenized_Gateway
         $message = !empty($charge_result['message'])
             ? sanitize_text_field((string) $charge_result['message'])
             : __('Recurring charge failed.', 'woo-subzero');
+
+        $this->log_diagnostic(
+            'error',
+            $message,
+            array(
+                'subscription_id' => $subscription->get_id(),
+                'renewal_order_id' => $renewal_order->get_id(),
+                'payment_token_id' => $token->get_id(),
+            )
+        );
 
         $renewal_order->update_status('failed', $message);
     }
@@ -183,6 +215,15 @@ class WSZ_Tokenized_Gateway
         );
 
         if (!is_callable($charge_callback)) {
+            $this->log_diagnostic(
+                'error',
+                __('Recurring charge handler not configured.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                )
+            );
+
             return array(
                 'paid' => false,
                 'message' => __('Recurring charge handler not configured.', 'woo-subzero'),
@@ -218,5 +259,15 @@ class WSZ_Tokenized_Gateway
                 'message' => $throwable->getMessage(),
             );
         }
+    }
+
+    private function log_diagnostic(string $level, string $message, array $context = array()): void
+    {
+        if (!class_exists('WSZ_Admin_Settings')) {
+            return;
+        }
+
+        $context['source'] = 'woo-subzero';
+        WSZ_Admin_Settings::log_diagnostic($level, $message, $context);
     }
 }

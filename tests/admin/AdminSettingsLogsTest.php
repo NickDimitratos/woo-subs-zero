@@ -1,0 +1,322 @@
+<?php
+
+use PHPUnit\Framework\TestCase;
+
+if (!defined('ABSPATH')) {
+    define('ABSPATH', __DIR__ . '/');
+}
+
+if (!function_exists('__')) {
+    function __($text, $domain = null)
+    {
+        return (string) $text;
+    }
+}
+
+if (!function_exists('esc_html__')) {
+    function esc_html__($text, $domain = null)
+    {
+        return (string) $text;
+    }
+}
+
+if (!function_exists('esc_html')) {
+    function esc_html($text)
+    {
+        return (string) $text;
+    }
+}
+
+if (!function_exists('esc_attr')) {
+    function esc_attr($text)
+    {
+        return (string) $text;
+    }
+}
+
+if (!function_exists('esc_url')) {
+    function esc_url($url)
+    {
+        return (string) $url;
+    }
+}
+
+if (!function_exists('sanitize_key')) {
+    function sanitize_key($key)
+    {
+        $key = strtolower((string) $key);
+        return preg_replace('/[^a-z0-9_\-]/', '', $key);
+    }
+}
+
+if (!function_exists('sanitize_text_field')) {
+    function sanitize_text_field($value)
+    {
+        return trim((string) $value);
+    }
+}
+
+if (!function_exists('wp_unslash')) {
+    function wp_unslash($value)
+    {
+        return $value;
+    }
+}
+
+if (!function_exists('wp_parse_args')) {
+    function wp_parse_args($args, $defaults = array())
+    {
+        return array_merge((array) $defaults, (array) $args);
+    }
+}
+
+if (!function_exists('wp_json_encode')) {
+    function wp_json_encode($data, $options = 0, $depth = 512)
+    {
+        return json_encode($data, $options, $depth);
+    }
+}
+
+if (!function_exists('current_time')) {
+    function current_time($type, $gmt = false)
+    {
+        return 1700000000;
+    }
+}
+
+if (!function_exists('wp_date')) {
+    function wp_date($format, $timestamp = null, $timezone = null)
+    {
+        return gmdate($format, (int) $timestamp);
+    }
+}
+
+if (!function_exists('current_user_can')) {
+    function current_user_can($capability)
+    {
+        return true;
+    }
+}
+
+if (!function_exists('admin_url')) {
+    function admin_url($path = '')
+    {
+        return 'https://example.test/wp-admin/' . ltrim((string) $path, '/');
+    }
+}
+
+if (!function_exists('add_query_arg')) {
+    function add_query_arg($args, $url = '')
+    {
+        $separator = false === strpos((string) $url, '?') ? '?' : '&';
+
+        return (string) $url . $separator . http_build_query((array) $args);
+    }
+}
+
+if (!function_exists('selected')) {
+    function selected($selected, $current = true, $echo = true)
+    {
+        $result = ((string) $selected === (string) $current) ? ' selected="selected"' : '';
+
+        if ($echo) {
+            echo $result;
+        }
+
+        return $result;
+    }
+}
+
+if (!function_exists('checked')) {
+    function checked($checked, $current = true, $echo = true)
+    {
+        $result = ((string) $checked === (string) $current) ? ' checked="checked"' : '';
+
+        if ($echo) {
+            echo $result;
+        }
+
+        return $result;
+    }
+}
+
+if (!function_exists('submit_button')) {
+    function submit_button($text = null, $type = 'primary', $name = 'submit', $wrap = true, $other_attributes = null)
+    {
+        echo '<button type="submit" class="' . esc_attr((string) $type) . '">' . esc_html((string) ($text ?? 'Save Changes')) . '</button>';
+    }
+}
+
+if (!function_exists('settings_fields')) {
+    function settings_fields($option_group)
+    {
+    }
+}
+
+if (!function_exists('wp_nonce_field')) {
+    function wp_nonce_field($action = -1, $name = '_wpnonce', $referer = true, $display = true)
+    {
+        $field = '<input type="hidden" name="' . esc_attr((string) $name) . '" value="nonce-' . esc_attr((string) $action) . '" />';
+
+        if ($display) {
+            echo $field;
+        }
+
+        return $field;
+    }
+}
+
+if (!function_exists('check_admin_referer')) {
+    function check_admin_referer($action = -1, $query_arg = '_wpnonce')
+    {
+        return true;
+    }
+}
+
+if (!function_exists('wp_safe_redirect')) {
+    function wp_safe_redirect($location, $status = 302, $x_redirect_by = 'WordPress')
+    {
+        $GLOBALS['wsz_admin_settings_redirect'] = (string) $location;
+
+        return true;
+    }
+}
+
+if (!function_exists('wp_die')) {
+    function wp_die($message = '')
+    {
+        throw new RuntimeException((string) $message);
+    }
+}
+
+if (!function_exists('get_option')) {
+    function get_option($option_name, $default = false)
+    {
+        if ('wsz_subs_options' === $option_name && isset($GLOBALS['wsz_subs_test_options'])) {
+            return $GLOBALS['wsz_subs_test_options'];
+        }
+
+        if ('wsz_subs_test_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_test_card_transactions'])) {
+            return $GLOBALS['wsz_subs_test_card_transactions'];
+        }
+
+        if (isset($GLOBALS['wsz_admin_test_options']) && is_array($GLOBALS['wsz_admin_test_options']) && array_key_exists($option_name, $GLOBALS['wsz_admin_test_options'])) {
+            return $GLOBALS['wsz_admin_test_options'][$option_name];
+        }
+
+        return $GLOBALS['wsz_admin_settings_options'][$option_name] ?? $default;
+    }
+}
+
+if (!function_exists('update_option')) {
+    function update_option($option_name, $value, $autoload = null)
+    {
+        if ('wsz_subs_test_card_transactions' === $option_name) {
+            $GLOBALS['wsz_subs_test_card_transactions'] = is_array($value) ? $value : array();
+        }
+
+        if (isset($GLOBALS['wsz_admin_test_options']) && is_array($GLOBALS['wsz_admin_test_options'])) {
+            $GLOBALS['wsz_admin_test_options'][$option_name] = $value;
+        }
+
+        $GLOBALS['wsz_admin_settings_options'][$option_name] = $value;
+
+        return true;
+    }
+}
+
+if (!function_exists('delete_option')) {
+    function delete_option($option_name)
+    {
+        unset($GLOBALS['wsz_admin_settings_options'][$option_name]);
+
+        return true;
+    }
+}
+
+require_once dirname(__DIR__, 2) . '/includes/admin/class-wsz-admin-settings.php';
+
+final class AdminSettingsLogsTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $_GET = array();
+        $_POST = array();
+        $GLOBALS['wsz_admin_settings_options'] = array();
+        unset($GLOBALS['wsz_admin_settings_redirect']);
+    }
+
+    protected function tearDown(): void
+    {
+        unset($GLOBALS['wsz_admin_settings_options']);
+        unset($GLOBALS['wsz_admin_settings_redirect']);
+        $_GET = array();
+        $_POST = array();
+
+        parent::tearDown();
+    }
+
+    public function test_logs_tab_renders_diagnostic_entries(): void
+    {
+        WSZ_Admin_Settings::log_diagnostic(
+            'error',
+            'Recurring charge failed for test order.',
+            array(
+                'source' => 'woo-subzero',
+                'order_id' => 55,
+                'secret' => array('nested' => 'safe'),
+            )
+        );
+
+        $_GET = array(
+            'page' => 'wsz-subs-settings',
+            'tab' => 'logs',
+            'level' => 'error',
+        );
+
+        $settings = new WSZ_Admin_Settings();
+
+        ob_start();
+        $settings->render_settings_page();
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('Error Logs', $output);
+        $this->assertStringContainsString('Recurring charge failed for test order.', $output);
+        $this->assertStringContainsString('woo-subzero', $output);
+        $this->assertStringContainsString('order_id', $output);
+        $this->assertStringContainsString('nested', $output);
+    }
+
+    public function test_logs_tab_filters_below_minimum_level(): void
+    {
+        WSZ_Admin_Settings::log_diagnostic('info', 'Informational entry.', array('source' => 'woo-subzero'));
+        WSZ_Admin_Settings::log_diagnostic('error', 'Error entry.', array('source' => 'woo-subzero'));
+
+        $_GET = array(
+            'page' => 'wsz-subs-settings',
+            'tab' => 'logs',
+            'level' => 'warning',
+        );
+
+        $settings = new WSZ_Admin_Settings();
+
+        ob_start();
+        $settings->render_settings_page();
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('Error entry.', $output);
+        $this->assertStringNotContainsString('Informational entry.', $output);
+    }
+
+    public function test_clear_diagnostic_logs_deletes_option(): void
+    {
+        WSZ_Admin_Settings::log_diagnostic('error', 'Error entry.', array('source' => 'woo-subzero'));
+
+        $settings = new WSZ_Admin_Settings();
+        $settings->clear_diagnostic_logs();
+
+        $this->assertArrayNotHasKey('wsz_subs_diagnostic_logs', $GLOBALS['wsz_admin_settings_options']);
+    }
+}
