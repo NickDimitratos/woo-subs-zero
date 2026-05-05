@@ -286,6 +286,7 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         $order->update_meta_data('_payment_token_id', $token_id);
+        WSZ_Subscription_Manager::attach_payment_token_to_order($order, $token_id);
         $order->save();
         $this->sync_token_to_order_subscriptions($order, $gateway_id, $token_id);
 

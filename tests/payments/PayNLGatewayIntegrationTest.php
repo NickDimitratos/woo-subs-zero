@@ -235,6 +235,10 @@ final class PayNLGatewayIntegrationTest extends TestCase
             ->with('_payment_token_id', $this->greaterThan(0));
         $order
             ->expects($this->once())
+            ->method('add_payment_token')
+            ->with($this->isInstanceOf(WC_Payment_Token::class));
+        $order
+            ->expects($this->once())
             ->method('save');
 
         $subscription = $this->createMock(WC_Order::class);
@@ -290,6 +294,10 @@ final class PayNLGatewayIntegrationTest extends TestCase
             ->expects($this->once())
             ->method('update_meta_data')
             ->with('_payment_token_id', $this->greaterThan(0));
+        $order
+            ->expects($this->once())
+            ->method('add_payment_token')
+            ->with($this->isInstanceOf(WC_Payment_Token::class));
         $order
             ->expects($this->once())
             ->method('save');

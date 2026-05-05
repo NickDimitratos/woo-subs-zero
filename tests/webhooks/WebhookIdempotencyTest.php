@@ -136,6 +136,11 @@ final class WebhookIdempotencyTest extends TestCase
 
         $order
             ->expects($this->once())
+            ->method('add_payment_token')
+            ->with($this->isInstanceOf(WC_Payment_Token::class));
+
+        $order
+            ->expects($this->once())
             ->method('save');
 
         $subscription = $this->createMock(WC_Order::class);

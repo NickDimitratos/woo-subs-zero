@@ -477,7 +477,9 @@ class WSZ_Renewal_Engine
     {
         $token = $this->payment_handler->get_payment_token_for_subscription($subscription);
         if ($token instanceof WC_Payment_Token) {
-            $renewal_order->update_meta_data('_payment_token_id', (int) $token->get_id());
+            $token_id = (int) $token->get_id();
+            $renewal_order->update_meta_data('_payment_token_id', $token_id);
+            WSZ_Subscription_Manager::attach_payment_token_to_order($renewal_order, $token_id);
         }
     }
 
