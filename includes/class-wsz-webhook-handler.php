@@ -2,6 +2,10 @@
 
 defined('ABSPATH') || exit;
 
+if (!class_exists('WSZ_PayNL_Token_Support')) {
+    require_once __DIR__ . '/class-wsz-paynl-token-support.php';
+}
+
 class WSZ_Webhook_Handler
 {
     private WSZ_Subscription_Manager $subscription_manager;
@@ -136,44 +140,7 @@ class WSZ_Webhook_Handler
 
     private function read_exchange_payload(): array
     {
-        $payload = array();
-
-        foreach ($_REQUEST as $key => $value) {
-            $payload[sanitize_key((string) $key)] = is_scalar($value) ? wp_unslash((string) $value) : '';
-        }
-
-        $raw_body = file_get_contents('php://input');
-
-        if (is_string($raw_body) && '' !== trim($raw_body)) {
-            if (strlen($raw_body) > 1024 * 1024) {
-                return $payload;
-            }
-
-            $json = json_decode($raw_body, true);
-            if (is_array($json)) {
-                foreach ($json as $key => $value) {
-                    $payload[sanitize_key((string) $key)] = is_scalar($value) ? (string) $value : '';
-                }
-            }
-
-            if (empty($json) && str_starts_with(trim($raw_body), '<')) {
-                $previous_errors = libxml_use_internal_errors(true);
-                $xml = simplexml_load_string($raw_body, 'SimpleXMLElement', LIBXML_NONET | LIBXML_NOCDATA);
-                libxml_clear_errors();
-                libxml_use_internal_errors($previous_errors);
-
-                if ($xml instanceof SimpleXMLElement) {
-                    $xml_payload = json_decode(wp_json_encode($xml), true);
-                    if (is_array($xml_payload)) {
-                        foreach ($xml_payload as $key => $value) {
-                            $payload[sanitize_key((string) $key)] = is_scalar($value) ? (string) $value : '';
-                        }
-                    }
-                }
-            }
-        }
-
-        return $payload;
+        return WSZ_PayNL_Token_Support::read_exchange_payload();
     }
 
     private function extract_order_id(array $payload): int
@@ -272,20 +239,14 @@ class WSZ_Webhook_Handler
 
     private function extract_transaction_id(array $payload): string
     {
-        foreach (array('transaction_id', 'transactionid', 'transaction') as $key) {
-            if (!empty($payload[$key])) {
-                return sanitize_text_field((string) $payload[$key]);
-            }
-        }
-
-        return '';
+        return WSZ_PayNL_Token_Support::extract_transaction_id($payload);
     }
 
     private function is_token_exchange_payload(array $payload): bool
     {
         $action = isset($payload['action']) ? sanitize_key((string) $payload['action']) : '';
 
-        return 'token' === $action && !empty($payload['recurring_id']);
+        return 'token' === $action && '' !== WSZ_PayNL_Token_Support::extract_recurring_id($payload);
     }
 
     private function store_recurring_payment_token(WC_Order $order, array $payload): int
@@ -294,7 +255,7 @@ class WSZ_Webhook_Handler
             return 0;
         }
 
-        $recurring_id = sanitize_text_field((string) ($payload['recurring_id'] ?? ''));
+        $recurring_id = WSZ_PayNL_Token_Support::extract_recurring_id($payload);
         if ('' === $recurring_id) {
             return 0;
         }
@@ -395,8 +356,9 @@ class WSZ_Webhook_Handler
         $transaction_id = $this->extract_transaction_id($payload);
         $state = isset($payload['state']) ? sanitize_key((string) $payload['state']) : '';
         $action = isset($payload['action']) ? sanitize_key((string) $payload['action']) : '';
-        $recurring_fingerprint = !empty($payload['recurring_id'])
-            ? hash('sha256', (string) $payload['recurring_id'])
+        $recurring_id = WSZ_PayNL_Token_Support::extract_recurring_id($payload);
+        $recurring_fingerprint = '' !== $recurring_id
+            ? hash('sha256', $recurring_id)
             : '';
 
         $fingerprint = $order->get_id() . '|' . $transaction_id . '|' . $state . '|' . $action . '|' . $recurring_fingerprint;

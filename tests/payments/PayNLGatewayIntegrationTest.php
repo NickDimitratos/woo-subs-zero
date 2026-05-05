@@ -152,6 +152,23 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
     }
 
+    public function test_paynl_token_exchange_payload_accepts_nested_token_alias(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $payload = WSZ_PayNL_Token_Support::normalize_payload(
+            array(
+                'action' => 'token',
+                'payment' => array(
+                    'token' => array(
+                        'id' => 'VY-9212-9171-2390',
+                    ),
+                ),
+            )
+        );
+
+        $this->assertTrue($integration->is_token_exchange_payload($payload));
+    }
+
     public function test_paynl_token_exchange_resolves_order_through_paynl_transaction_table(): void
     {
         $integration = new WSZ_PayNL_Gateway_Integration();
@@ -172,6 +189,31 @@ final class PayNLGatewayIntegrationTest extends TestCase
                 )
             )
         );
+    }
+
+    public function test_paynl_token_exchange_resolves_order_from_normalized_payment_id(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $order = $this->createMock(WC_Order::class);
+
+        $GLOBALS['wsz_paynl_test_transactions']['EX-2345-2238-9812'] = array(
+            'order_id' => 10486,
+        );
+        $GLOBALS['wsz_subs_test_orders'][10486] = $order;
+
+        $payload = WSZ_PayNL_Token_Support::normalize_payload(
+            array(
+                'action' => 'token',
+                'payment' => array(
+                    'id' => 'EX-2345-2238-9812',
+                    'token' => array(
+                        'id' => 'VY-9212-9171-2390',
+                    ),
+                ),
+            )
+        );
+
+        $this->assertSame($order, $integration->resolve_order_from_token_exchange($payload));
     }
 
     public function test_paynl_token_exchange_stores_token_and_syncs_subscription(): void
@@ -222,6 +264,37 @@ final class PayNLGatewayIntegrationTest extends TestCase
                 'recurring_id' => 'VY-9212-9171-2390',
             )
         );
+
+        $this->assertGreaterThan(0, $token_id);
+    }
+
+    public function test_paynl_token_can_be_recovered_from_parent_order_meta(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $order = $this->createMock(WC_Order::class);
+        $order->method('get_id')->willReturn(10486);
+        $order->method('get_customer_id')->willReturn(5);
+        $order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $order
+            ->method('get_meta_data')
+            ->willReturn(
+                array(
+                    array(
+                        'key' => '_paynl_recurring_id',
+                        'value' => 'VY-9212-9171-2390',
+                    ),
+                )
+            );
+        $order
+            ->expects($this->once())
+            ->method('update_meta_data')
+            ->with('_payment_token_id', $this->greaterThan(0));
+        $order
+            ->expects($this->once())
+            ->method('save');
+
+        $token_id = $integration->store_recurring_payment_token_from_order_meta($order);
 
         $this->assertGreaterThan(0, $token_id);
     }
