@@ -8,10 +8,22 @@ class WSZ_Admin_Settings
 
     private const SETTINGS_PAGE = 'wsz_subs_settings';
 
+    private const DIAGNOSTIC_LOG_OPTION = 'wsz_subs_diagnostic_logs';
+
+    private const MAX_DIAGNOSTIC_LOGS = 200;
+
+    private const LOG_LEVELS = array('emergency', 'alert', 'critical', 'error', 'warning', 'notice', 'info', 'debug');
+
+    private const LOG_SOURCES = array(
+        'woo-subzero',
+        'woo-subzero-test-card',
+    );
+
     public function init(): void
     {
         add_action('admin_menu', array($this, 'register_menu'));
         add_action('admin_init', array($this, 'register_settings'));
+        add_action('admin_post_wsz_subs_clear_diagnostic_logs', array($this, 'handle_clear_diagnostic_logs'));
 
         add_filter('action_scheduler_queue_runner_batch_size', array($this, 'filter_queue_batch_size'));
         add_filter('action_scheduler_queue_runner_concurrent_batches', array($this, 'filter_queue_concurrent_batches'));
@@ -330,6 +342,7 @@ class WSZ_Admin_Settings
         $tabs = $this->get_settings_tabs();
         $active_tab = $this->get_active_tab($tabs);
         $active_section = (string) ($tabs[$active_tab]['section'] ?? 'wsz_subs_behavior');
+        $is_custom_tab = !empty($tabs[$active_tab]['custom']);
 
         echo '<div class="wrap">';
         echo '<h1>' . esc_html__('Woo Subs-Zero', 'woo-subzero') . '</h1>';
@@ -337,11 +350,16 @@ class WSZ_Admin_Settings
 
         $this->render_settings_tabs($tabs, $active_tab);
 
-        echo '<form method="post" action="options.php">';
-        settings_fields(self::SETTINGS_PAGE);
-        $this->render_settings_section($active_section);
-        submit_button();
-        echo '</form>';
+        if ($is_custom_tab && 'logs' === $active_tab) {
+            $this->render_error_logs_tab();
+        } else {
+            echo '<form method="post" action="options.php">';
+            settings_fields(self::SETTINGS_PAGE);
+            $this->render_settings_section($active_section);
+            submit_button();
+            echo '</form>';
+        }
+
         echo '</div>';
     }
 
@@ -511,7 +529,63 @@ class WSZ_Admin_Settings
                 'label' => __('Queue', 'woo-subzero'),
                 'section' => 'wsz_subs_queue',
             ),
+            'logs' => array(
+                'label' => __('Error Logs', 'woo-subzero'),
+                'section' => '',
+                'custom' => true,
+            ),
         );
+    }
+
+    public static function log_diagnostic(string $level, string $message, array $context = array()): void
+    {
+        $level = sanitize_key($level);
+
+        if (!in_array($level, self::LOG_LEVELS, true)) {
+            $level = 'error';
+        }
+
+        $entry = array(
+            'timestamp' => function_exists('current_time') ? (int) current_time('timestamp', true) : time(),
+            'level' => $level,
+            'message' => sanitize_text_field($message),
+            'source' => isset($context['source']) ? sanitize_key((string) $context['source']) : 'woo-subzero',
+            'context' => self::sanitize_log_context($context),
+        );
+
+        $logs = get_option(self::DIAGNOSTIC_LOG_OPTION, array());
+        $logs = is_array($logs) ? $logs : array();
+        array_unshift($logs, $entry);
+        $logs = array_slice($logs, 0, self::MAX_DIAGNOSTIC_LOGS);
+
+        update_option(self::DIAGNOSTIC_LOG_OPTION, $logs, false);
+    }
+
+    public function handle_clear_diagnostic_logs(): void
+    {
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(esc_html__('You do not have permission to clear Woo Subs-Zero logs.', 'woo-subzero'));
+        }
+
+        check_admin_referer('wsz_subs_clear_diagnostic_logs');
+        $this->clear_diagnostic_logs();
+
+        wp_safe_redirect(
+            add_query_arg(
+                array(
+                    'page' => 'wsz-subs-settings',
+                    'tab' => 'logs',
+                    'logs-cleared' => '1',
+                ),
+                admin_url('admin.php')
+            )
+        );
+        exit;
+    }
+
+    public function clear_diagnostic_logs(): void
+    {
+        delete_option(self::DIAGNOSTIC_LOG_OPTION);
     }
 
     private function get_active_tab(array $tabs): string
@@ -578,6 +652,302 @@ class WSZ_Admin_Settings
         echo '<table class="form-table" role="presentation">';
         do_settings_fields(self::SETTINGS_PAGE, $section_id);
         echo '</table>';
+    }
+
+    private function render_error_logs_tab(): void
+    {
+        $filters = $this->get_log_filters();
+        $diagnostic_logs = $this->get_diagnostic_logs($filters);
+        $woocommerce_logs = $this->get_woocommerce_log_entries($filters);
+        $woocommerce_log_url = admin_url('admin.php?page=wc-status&tab=logs');
+
+        if (isset($_GET['logs-cleared'])) {
+            echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Woo Subs-Zero diagnostic logs cleared.', 'woo-subzero') . '</p></div>';
+        }
+
+        echo '<h2>' . esc_html__('Error Logs', 'woo-subzero') . '</h2>';
+        echo '<p>' . esc_html__('Review recent Woo Subs-Zero diagnostics and WooCommerce logger entries for subscription and renewal debugging.', 'woo-subzero') . '</p>';
+
+        echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '" style="margin: 16px 0;">';
+        echo '<input type="hidden" name="page" value="wsz-subs-settings" />';
+        echo '<input type="hidden" name="tab" value="logs" />';
+        $this->render_log_filter_controls($filters);
+        submit_button(__('Filter logs', 'woo-subzero'), 'secondary', '', false);
+        echo '</form>';
+
+        echo '<h3>' . esc_html__('Woo Subs-Zero Diagnostics', 'woo-subzero') . '</h3>';
+        $this->render_log_table($diagnostic_logs);
+
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin: 12px 0 28px;">';
+        echo '<input type="hidden" name="action" value="wsz_subs_clear_diagnostic_logs" />';
+        wp_nonce_field('wsz_subs_clear_diagnostic_logs');
+        submit_button(__('Clear Woo Subs-Zero diagnostics', 'woo-subzero'), 'delete', '', false);
+        echo '</form>';
+
+        echo '<h3>' . esc_html__('WooCommerce Logger Entries', 'woo-subzero') . '</h3>';
+
+        if (!empty($woocommerce_logs)) {
+            $this->render_log_table($woocommerce_logs);
+            return;
+        }
+
+        echo '<p>' . esc_html__('No WooCommerce database log entries were found for the selected filters. If your store logs to files, use WooCommerce > Status > Logs.', 'woo-subzero') . '</p>';
+        printf(
+            '<p><a class="button" href="%s">%s</a></p>',
+            esc_url($woocommerce_log_url),
+            esc_html__('Open WooCommerce logs', 'woo-subzero')
+        );
+    }
+
+    private function render_log_filter_controls(array $filters): void
+    {
+        echo '<label style="margin-right: 12px;">';
+        echo esc_html__('Source', 'woo-subzero') . ' ';
+        echo '<select name="source">';
+        echo '<option value="">' . esc_html__('All plugin sources', 'woo-subzero') . '</option>';
+
+        foreach (self::LOG_SOURCES as $source) {
+            printf(
+                '<option value="%1$s" %2$s>%3$s</option>',
+                esc_attr($source),
+                selected($source, $filters['source'], false),
+                esc_html($source)
+            );
+        }
+
+        echo '</select>';
+        echo '</label>';
+
+        echo '<label style="margin-right: 12px;">';
+        echo esc_html__('Minimum level', 'woo-subzero') . ' ';
+        echo '<select name="level">';
+
+        foreach (self::LOG_LEVELS as $level) {
+            printf(
+                '<option value="%1$s" %2$s>%3$s</option>',
+                esc_attr($level),
+                selected($level, $filters['level'], false),
+                esc_html(ucfirst($level))
+            );
+        }
+
+        echo '</select>';
+        echo '</label>';
+
+        printf(
+            '<label style="margin-right: 12px;">%1$s <input type="number" class="small-text" name="limit" min="10" max="200" value="%2$d" /></label>',
+            esc_html__('Limit', 'woo-subzero'),
+            (int) $filters['limit']
+        );
+    }
+
+    private function render_log_table(array $entries): void
+    {
+        if (empty($entries)) {
+            echo '<p>' . esc_html__('No log entries found for the selected filters.', 'woo-subzero') . '</p>';
+            return;
+        }
+
+        echo '<table class="widefat striped">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Time', 'woo-subzero') . '</th>';
+        echo '<th>' . esc_html__('Level', 'woo-subzero') . '</th>';
+        echo '<th>' . esc_html__('Source', 'woo-subzero') . '</th>';
+        echo '<th>' . esc_html__('Message', 'woo-subzero') . '</th>';
+        echo '<th>' . esc_html__('Context', 'woo-subzero') . '</th>';
+        echo '</tr></thead><tbody>';
+
+        foreach ($entries as $entry) {
+            echo '<tr>';
+            echo '<td>' . esc_html($this->format_log_timestamp((int) ($entry['timestamp'] ?? 0))) . '</td>';
+            echo '<td><code>' . esc_html((string) ($entry['level'] ?? '')) . '</code></td>';
+            echo '<td><code>' . esc_html((string) ($entry['source'] ?? '')) . '</code></td>';
+            echo '<td>' . esc_html((string) ($entry['message'] ?? '')) . '</td>';
+            echo '<td><code>' . esc_html($this->stringify_log_context($entry['context'] ?? array())) . '</code></td>';
+            echo '</tr>';
+        }
+
+        echo '</tbody></table>';
+    }
+
+    private function get_log_filters(): array
+    {
+        $source = isset($_GET['source']) ? sanitize_key((string) wp_unslash($_GET['source'])) : '';
+        $level = isset($_GET['level']) ? sanitize_key((string) wp_unslash($_GET['level'])) : 'warning';
+        $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 50;
+
+        if ('' !== $source && !in_array($source, self::LOG_SOURCES, true)) {
+            $source = '';
+        }
+
+        if (!in_array($level, self::LOG_LEVELS, true)) {
+            $level = 'warning';
+        }
+
+        return array(
+            'source' => $source,
+            'level' => $level,
+            'limit' => min(200, max(10, $limit)),
+        );
+    }
+
+    private function get_diagnostic_logs(array $filters): array
+    {
+        $logs = get_option(self::DIAGNOSTIC_LOG_OPTION, array());
+        $logs = is_array($logs) ? $logs : array();
+
+        return array_slice($this->filter_log_entries($logs, $filters), 0, (int) $filters['limit']);
+    }
+
+    private function get_woocommerce_log_entries(array $filters): array
+    {
+        if (!class_exists('WC_Log_Handler_DB') || !is_callable(array('WC_Log_Handler_DB', 'get_log_entries'))) {
+            return array();
+        }
+
+        $raw_entries = WC_Log_Handler_DB::get_log_entries(
+            array(
+                'source' => '' !== $filters['source'] ? $filters['source'] : self::LOG_SOURCES,
+                'level' => $filters['level'],
+                'limit' => (int) $filters['limit'],
+                'orderby' => 'timestamp',
+                'order' => 'DESC',
+            )
+        );
+
+        if (!is_array($raw_entries)) {
+            return array();
+        }
+
+        $entries = array();
+
+        foreach ($raw_entries as $entry) {
+            $data = is_object($entry) ? get_object_vars($entry) : (array) $entry;
+            $entries[] = array(
+                'timestamp' => $this->normalize_log_timestamp($data['timestamp'] ?? ($data['date_created'] ?? 0)),
+                'level' => sanitize_key((string) ($data['level'] ?? '')),
+                'source' => sanitize_key((string) ($data['source'] ?? '')),
+                'message' => (string) ($data['message'] ?? ''),
+                'context' => isset($data['context']) && is_array($data['context']) ? $data['context'] : array(),
+            );
+        }
+
+        return $this->filter_log_entries($entries, $filters);
+    }
+
+    private function filter_log_entries(array $entries, array $filters): array
+    {
+        $minimum_weight = $this->get_log_level_weight((string) $filters['level']);
+        $filtered = array();
+
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $source = sanitize_key((string) ($entry['source'] ?? ''));
+            $level = sanitize_key((string) ($entry['level'] ?? ''));
+
+            if ('' !== $filters['source'] && $source !== $filters['source']) {
+                continue;
+            }
+
+            if (!in_array($source, self::LOG_SOURCES, true)) {
+                continue;
+            }
+
+            if ($this->get_log_level_weight($level) > $minimum_weight) {
+                continue;
+            }
+
+            $entry['timestamp'] = $this->normalize_log_timestamp($entry['timestamp'] ?? 0);
+            $entry['level'] = $level;
+            $entry['source'] = $source;
+            $entry['context'] = isset($entry['context']) && is_array($entry['context']) ? $entry['context'] : array();
+            $filtered[] = $entry;
+        }
+
+        usort(
+            $filtered,
+            static function (array $a, array $b): int {
+                return (int) ($b['timestamp'] ?? 0) <=> (int) ($a['timestamp'] ?? 0);
+            }
+        );
+
+        return $filtered;
+    }
+
+    private function get_log_level_weight(string $level): int
+    {
+        $index = array_search($level, self::LOG_LEVELS, true);
+
+        return false === $index ? count(self::LOG_LEVELS) : (int) $index;
+    }
+
+    private function normalize_log_timestamp($timestamp): int
+    {
+        if (is_numeric($timestamp)) {
+            return max(0, (int) $timestamp);
+        }
+
+        if ($timestamp instanceof DateTimeInterface) {
+            return (int) $timestamp->getTimestamp();
+        }
+
+        if (is_string($timestamp) && '' !== trim($timestamp)) {
+            $parsed = strtotime($timestamp);
+            return false === $parsed ? 0 : (int) $parsed;
+        }
+
+        return 0;
+    }
+
+    private function format_log_timestamp(int $timestamp): string
+    {
+        if ($timestamp <= 0) {
+            return '';
+        }
+
+        if (function_exists('wp_date')) {
+            return wp_date('Y-m-d H:i:s', $timestamp);
+        }
+
+        return gmdate('Y-m-d H:i:s', $timestamp);
+    }
+
+    private function stringify_log_context($context): string
+    {
+        if (!is_array($context) || empty($context)) {
+            return '';
+        }
+
+        $encoded = wp_json_encode(self::sanitize_log_context($context));
+
+        return is_string($encoded) ? $encoded : '';
+    }
+
+    private static function sanitize_log_context(array $context): array
+    {
+        $sanitized = array();
+
+        foreach ($context as $key => $value) {
+            $key = sanitize_key((string) $key);
+
+            if ('' === $key || 'source' === $key) {
+                continue;
+            }
+
+            if (is_scalar($value) || null === $value) {
+                $sanitized[$key] = sanitize_text_field((string) $value);
+                continue;
+            }
+
+            if (is_array($value)) {
+                $sanitized[$key] = self::sanitize_log_context($value);
+            }
+        }
+
+        return $sanitized;
     }
 
     public function filter_queue_batch_size(int $size): int
