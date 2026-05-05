@@ -70,9 +70,11 @@ class WSZ_Payment_Handler
 
         $gateway_registered = $this->is_gateway_registered($gateway_id);
         $has_reusable_payment_context = false;
+        $payment_context_diagnostics = array();
 
         if (!$gateway_registered && '' !== $gateway_id) {
-            $has_reusable_payment_context = $this->get_payment_token_for_subscription($subscription) instanceof WC_Payment_Token;
+            $payment_context_diagnostics = $this->inspect_reusable_payment_context($subscription, $gateway_id);
+            $has_reusable_payment_context = !empty($payment_context_diagnostics['has_reusable_payment_context']);
         }
 
         if ('' === $gateway_id || (!$gateway_registered && !$has_reusable_payment_context)) {
@@ -86,6 +88,12 @@ class WSZ_Payment_Handler
                     'subscription_id' => $subscription->get_id(),
                     'renewal_order_id' => $renewal_order->get_id(),
                     'gateway_id' => $gateway_id,
+                ) + $this->build_gateway_unavailable_diagnostics(
+                    $subscription,
+                    $renewal_order,
+                    $gateway_id,
+                    $gateway_registered,
+                    $payment_context_diagnostics
                 )
             );
             $renewal_order->update_status(
@@ -531,6 +539,187 @@ class WSZ_Payment_Handler
         $registered = $gateways->payment_gateways();
 
         return is_array($registered) ? $registered : array();
+    }
+
+    private function inspect_reusable_payment_context(WC_Order $subscription, string $gateway_id): array
+    {
+        $customer_id = (int) $subscription->get_customer_id();
+        $stored_token_id_before = $this->subscription_manager->get_payment_token_id($subscription);
+        $token = $this->get_payment_token_for_subscription($subscription);
+        $stored_token_id_after = $this->subscription_manager->get_payment_token_id($subscription);
+
+        $diagnostics = array(
+            'has_reusable_payment_context' => $token instanceof WC_Payment_Token,
+            'subscription_customer_id' => $customer_id,
+            'stored_payment_token_id_before_resolution' => $stored_token_id_before,
+            'stored_payment_token_id_after_resolution' => $stored_token_id_after,
+        );
+
+        if ($token instanceof WC_Payment_Token) {
+            $token_user_id = (int) $token->get_user_id();
+
+            $diagnostics['resolved_payment_token_id'] = (int) $token->get_id();
+            $diagnostics['payment_token_class'] = get_class($token);
+            $diagnostics['payment_token_user_id'] = $token_user_id;
+            $diagnostics['payment_token_owner_matches_customer'] = $customer_id <= 0 || $token_user_id === $customer_id;
+
+            return $diagnostics;
+        }
+
+        if (class_exists('WC_Payment_Tokens') && $stored_token_id_after > 0 && is_callable(array('WC_Payment_Tokens', 'get'))) {
+            $raw_token = WC_Payment_Tokens::get($stored_token_id_after);
+            $diagnostics['payment_token_lookup_result'] = is_object($raw_token) ? get_class($raw_token) : gettype($raw_token);
+
+            if ($raw_token instanceof WC_Payment_Token) {
+                $diagnostics['payment_token_user_id'] = (int) $raw_token->get_user_id();
+                $diagnostics['payment_token_owner_matches_customer'] = $customer_id <= 0 || (int) $raw_token->get_user_id() === $customer_id;
+            }
+        }
+
+        $customer_tokens = $this->get_customer_token_diagnostics($customer_id, $gateway_id);
+        if (!empty($customer_tokens)) {
+            $diagnostics += $customer_tokens;
+        }
+
+        return $diagnostics;
+    }
+
+    private function get_customer_token_diagnostics(int $customer_id, string $gateway_id): array
+    {
+        if (
+            $customer_id <= 0
+            || '' === $gateway_id
+            || !class_exists('WC_Payment_Tokens')
+            || !is_callable(array('WC_Payment_Tokens', 'get_customer_tokens'))
+        ) {
+            return array();
+        }
+
+        $tokens = WC_Payment_Tokens::get_customer_tokens($customer_id, $gateway_id);
+
+        if (!is_array($tokens)) {
+            return array('customer_gateway_tokens_result' => gettype($tokens));
+        }
+
+        $token_ids = array();
+        $token_classes = array();
+        $default_token_id = 0;
+
+        foreach ($tokens as $token) {
+            if (!($token instanceof WC_Payment_Token)) {
+                continue;
+            }
+
+            $token_id = (int) $token->get_id();
+            if ($token_id > 0) {
+                $token_ids[] = $token_id;
+            }
+
+            $token_classes[] = get_class($token);
+
+            if (0 === $default_token_id && is_callable(array($token, 'is_default')) && $token->is_default()) {
+                $default_token_id = $token_id;
+            }
+        }
+
+        return array(
+            'customer_gateway_token_count' => count($tokens),
+            'customer_gateway_token_ids' => $token_ids,
+            'customer_gateway_token_classes' => array_values(array_unique($token_classes)),
+            'customer_gateway_default_token_id' => $default_token_id,
+        );
+    }
+
+    private function build_gateway_unavailable_diagnostics(
+        WC_Order $subscription,
+        WC_Order $renewal_order,
+        string $gateway_id,
+        bool $gateway_registered,
+        array $payment_context_diagnostics
+    ): array {
+        return array(
+            'gateway_registered' => $gateway_registered,
+            'scheduled_payment_hook_has_listeners' => $this->has_gateway_scheduled_payment_listeners($gateway_id),
+            'subscription_payment_method' => sanitize_key((string) $subscription->get_payment_method()),
+            'subscription_payment_method_title' => (string) $subscription->get_payment_method_title(),
+            'renewal_payment_method' => sanitize_key((string) $renewal_order->get_payment_method()),
+            'renewal_payment_method_title' => (string) $renewal_order->get_payment_method_title(),
+            'subscription_status' => (string) $subscription->get_status(),
+            'renewal_order_status' => (string) $renewal_order->get_status(),
+            'subscription_parent_order_id' => $this->get_order_parent_id($subscription),
+            'subscription_parent_order_meta_id' => (int) $subscription->get_meta('_wsz_parent_order_id', true),
+            'renewal_order_parent_id' => $this->get_order_parent_id($renewal_order),
+            'renewal_order_token_meta' => $renewal_order->get_meta('_payment_token_id', true),
+        ) + $payment_context_diagnostics + $this->get_gateway_runtime_diagnostics($gateway_id);
+    }
+
+    private function get_gateway_runtime_diagnostics(string $gateway_id): array
+    {
+        $registered_gateways = $this->get_registered_gateway_map();
+        $available_gateways = $this->get_available_gateway_map();
+        $target_gateway = $registered_gateways[$gateway_id] ?? $available_gateways[$gateway_id] ?? null;
+
+        $diagnostics = array(
+            'registered_gateway_ids' => array_values(array_map('strval', array_keys($registered_gateways))),
+            'available_gateway_ids' => array_values(array_map('strval', array_keys($available_gateways))),
+        );
+
+        if (is_object($target_gateway)) {
+            $diagnostics['target_gateway_class'] = get_class($target_gateway);
+
+            if (property_exists($target_gateway, 'enabled')) {
+                $diagnostics['target_gateway_enabled'] = (string) $target_gateway->enabled;
+            }
+
+            foreach (array('subscriptions', 'tokenization', 'subscription_payment_method_change') as $support) {
+                if (is_callable(array($target_gateway, 'supports'))) {
+                    $diagnostics['target_gateway_supports_' . $support] = (bool) $target_gateway->supports($support);
+                }
+            }
+        }
+
+        return $diagnostics;
+    }
+
+    private function get_available_gateway_map(): array
+    {
+        if (!function_exists('WC')) {
+            return array();
+        }
+
+        $wc = WC();
+
+        if (!$wc || !isset($wc->payment_gateways)) {
+            return array();
+        }
+
+        $gateways = $wc->payment_gateways();
+
+        if (!is_object($gateways) || !is_callable(array($gateways, 'get_available_payment_gateways'))) {
+            return array();
+        }
+
+        $available = $gateways->get_available_payment_gateways();
+
+        return is_array($available) ? $available : array();
+    }
+
+    private function has_gateway_scheduled_payment_listeners(string $gateway_id): bool
+    {
+        if ('' === $gateway_id || !function_exists('has_action')) {
+            return false;
+        }
+
+        return false !== has_action("woocommerce_scheduled_subscription_payment_{$gateway_id}");
+    }
+
+    private function get_order_parent_id(WC_Order $order): int
+    {
+        if (!is_callable(array($order, 'get_parent_id'))) {
+            return 0;
+        }
+
+        return (int) $order->get_parent_id();
     }
 
     private function resolve_fallback_token_id(WC_Order $subscription): int

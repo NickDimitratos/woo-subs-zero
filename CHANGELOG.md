@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.21] - 2026-05-05
+
+### Changed
+
+- Expanded gateway-unavailable renewal diagnostics with gateway registry, available gateway, scheduled hook listener, payment method, parent order, and reusable token context.
+- Kept recurring payment token/reference values out of diagnostic logs while exposing token IDs, ownership checks, and token classes needed for live renewal troubleshooting.
+
+### Tests
+
+- Updated renewal dispatch regression expectations for the additional diagnostic token inspection.
+
 ## [0.1.20] - 2026-05-05
 
 ### Changed
