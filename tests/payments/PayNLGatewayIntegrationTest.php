@@ -136,6 +136,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame(1234, $payload['transaction']['amount']);
         $this->assertSame('token', $payload['payment']['method']);
         $this->assertSame('VY-9212-9171-2390', $payload['payment']['token']['id']);
+        $this->assertSame(1, $payload['options']['tokenization']);
     }
 
     public function test_paynl_token_exchange_payload_is_detected(): void
@@ -167,6 +168,20 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
 
         $this->assertTrue($integration->is_token_exchange_payload($payload));
+    }
+
+    public function test_paynl_token_exchange_does_not_treat_recurring_token_hash_as_recurring_id(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $this->assertFalse(
+            $integration->is_token_exchange_payload(
+                array(
+                    'action' => 'token',
+                    'recurring_token' => 'c1747bf4d38cd6af76ca0d2ffe373987b666305e27dd8b5501a5facf90a99bffe',
+                )
+            )
+        );
     }
 
     public function test_paynl_token_exchange_resolves_order_through_paynl_transaction_table(): void
@@ -323,5 +338,28 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('VY-9212-9171-2390', $order_meta['_wsz_paynl_recurring_id'] ?? '');
         $this->assertSame('order_meta', $order_meta['_wsz_paynl_recurring_source'] ?? '');
         $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
+    }
+
+    public function test_paynl_token_recovery_ignores_recurring_token_hash_without_recurring_id(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $order = $this->createMock(WC_Order::class);
+        $order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $order
+            ->method('get_meta_data')
+            ->willReturn(
+                array(
+                    array(
+                        'key' => '_paynl_recurring_token',
+                        'value' => 'c1747bf4d38cd6af76ca0d2ffe373987b666305e27dd8b5501a5facf90a99bffe',
+                    ),
+                )
+            );
+        $order
+            ->expects($this->never())
+            ->method('update_meta_data');
+
+        $this->assertSame(0, $integration->store_recurring_payment_token_from_order_meta($order));
     }
 }
