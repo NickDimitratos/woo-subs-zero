@@ -110,6 +110,10 @@ class WSZ_Payment_Handler
             return;
         }
 
+        if ($this->process_wsz_tokenized_gateway_payment($gateway_id, $amount, $renewal_order)) {
+            return;
+        }
+
         do_action('woocommerce_scheduled_subscription_payment', $amount, $renewal_order);
         do_action("woocommerce_scheduled_subscription_payment_{$gateway_id}", $amount, $renewal_order);
     }
@@ -716,6 +720,44 @@ class WSZ_Payment_Handler
         }
 
         return false !== has_action("woocommerce_scheduled_subscription_payment_{$gateway_id}");
+    }
+
+    private function process_wsz_tokenized_gateway_payment(string $gateway_id, float $amount, WC_Order $renewal_order): bool
+    {
+        $gateway_id = sanitize_key($gateway_id);
+
+        if ('' === $gateway_id || !$this->is_wsz_tokenized_gateway_id($gateway_id)) {
+            return false;
+        }
+
+        if (!($this->tokenized_gateway instanceof WSZ_Tokenized_Gateway)) {
+            $this->tokenized_gateway = new WSZ_Tokenized_Gateway($this->subscription_manager, $this);
+        }
+
+        $this->tokenized_gateway->process_scheduled_payment($amount, $renewal_order);
+
+        return true;
+    }
+
+    private function is_wsz_tokenized_gateway_id(string $gateway_id): bool
+    {
+        if (!function_exists('apply_filters')) {
+            return false;
+        }
+
+        $gateway_ids = apply_filters('wsz_subs_tokenized_gateway_ids', array());
+
+        if (!is_array($gateway_ids)) {
+            return false;
+        }
+
+        foreach ($gateway_ids as $registered_gateway_id) {
+            if ($gateway_id === sanitize_key((string) $registered_gateway_id)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function get_order_parent_id(WC_Order $order): int
