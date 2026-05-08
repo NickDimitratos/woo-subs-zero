@@ -182,6 +182,10 @@ if (!function_exists('get_option')) {
             return $GLOBALS['wsz_subs_test_card_transactions'];
         }
 
+        if ('wsz_subs_paynl_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_paynl_card_transactions'])) {
+            return $GLOBALS['wsz_subs_paynl_card_transactions'];
+        }
+
         if (!isset($GLOBALS['wsz_admin_test_options']) || !is_array($GLOBALS['wsz_admin_test_options'])) {
             return $default;
         }
@@ -201,6 +205,10 @@ if (!function_exists('update_option')) {
             $GLOBALS['wsz_subs_test_card_transactions'] = is_array($value) ? $value : array();
         }
 
+        if ('wsz_subs_paynl_card_transactions' === $option_name) {
+            $GLOBALS['wsz_subs_paynl_card_transactions'] = is_array($value) ? $value : array();
+        }
+
         if (!isset($GLOBALS['wsz_admin_test_options']) || !is_array($GLOBALS['wsz_admin_test_options'])) {
             $GLOBALS['wsz_admin_test_options'] = array();
         }
@@ -213,6 +221,7 @@ if (!function_exists('update_option')) {
 
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-test-card-gateway.php';
+require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-gateway.php';
 require_once dirname(__DIR__, 2) . '/includes/admin/class-wsz-admin-subscriptions.php';
 
 final class AdminSubscriptionsTest extends TestCase
@@ -225,6 +234,7 @@ final class AdminSubscriptionsTest extends TestCase
         $GLOBALS['wsz_admin_test_meta_boxes'] = array();
         $GLOBALS['wsz_admin_test_removed_meta_boxes'] = array();
         $GLOBALS['wsz_subs_test_card_transactions'] = array();
+        $GLOBALS['wsz_subs_paynl_card_transactions'] = array();
         $GLOBALS['wsz_admin_test_scheduled'] = array();
         $GLOBALS['wsz_admin_test_unscheduled_actions'] = array();
         $GLOBALS['wsz_admin_test_options'] = array();
@@ -237,6 +247,7 @@ final class AdminSubscriptionsTest extends TestCase
         unset($GLOBALS['wsz_admin_test_meta_boxes']);
         unset($GLOBALS['wsz_admin_test_removed_meta_boxes']);
         unset($GLOBALS['wsz_subs_test_card_transactions']);
+        unset($GLOBALS['wsz_subs_paynl_card_transactions']);
         unset($GLOBALS['wsz_admin_test_scheduled']);
         unset($GLOBALS['wsz_admin_test_unscheduled_actions']);
         unset($GLOBALS['wsz_admin_test_options']);
@@ -457,12 +468,12 @@ final class AdminSubscriptionsTest extends TestCase
         $this->assertArrayHasKey('order_number', $columns);
         $this->assertArrayHasKey('wsz_next_renewal', $columns);
         $this->assertArrayHasKey('wsz_renewal_orders', $columns);
-        $this->assertArrayHasKey('wsz_last_test_card_tx', $columns);
+        $this->assertArrayHasKey('wsz_last_card_tx', $columns);
         $this->assertArrayNotHasKey('billing_address', $columns);
         $this->assertArrayNotHasKey('order_total', $columns);
     }
 
-    public function test_render_test_card_transactions_meta_box_displays_logged_transaction(): void
+    public function test_render_card_transactions_meta_box_displays_test_card_and_paynl_transactions(): void
     {
         $subscription = $this->createMock(WC_Order::class);
         $subscription->method('get_id')->willReturn(44);
@@ -485,17 +496,34 @@ final class AdminSubscriptionsTest extends TestCase
                 'transaction_id' => 'wsz_test_card_renewal_x',
             ),
         );
+        $GLOBALS['wsz_subs_paynl_card_transactions'] = array(
+            array(
+                'recorded_at_local' => '2026-04-27 16:01:00',
+                'recorded_at_gmt' => '2026-04-27 14:01:00',
+                'gateway' => 'PAY.nl',
+                'context' => 'renewal',
+                'subscription_id' => 44,
+                'order_id' => 556,
+                'amount' => 26.0,
+                'currency' => 'EUR',
+                'status' => 'completed',
+                'transaction_id' => 'PAY-RENEWAL-1',
+            ),
+        );
 
         $post = new WP_Post();
         $post->ID = 44;
 
         ob_start();
-        $admin->render_test_card_transactions_meta_box($post);
+        $admin->render_card_transactions_meta_box($post);
         $output = (string) ob_get_clean();
 
         $this->assertStringContainsString('wsz_test_card_renewal_x', $output);
+        $this->assertStringContainsString('PAY-RENEWAL-1', $output);
+        $this->assertStringContainsString('PAY.nl', $output);
         $this->assertStringContainsString('renewal', $output);
         $this->assertStringContainsString('555', $output);
+        $this->assertStringContainsString('556', $output);
     }
 
     public function test_render_subscription_meta_keys_meta_box_displays_subscription_meta_rows(): void

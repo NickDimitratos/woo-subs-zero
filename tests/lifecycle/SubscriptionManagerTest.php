@@ -24,6 +24,14 @@ if (!function_exists('wp_parse_args')) {
 if (!function_exists('get_option')) {
     function get_option($option_name, $default = array())
     {
+        if ('wsz_subs_paynl_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_paynl_card_transactions'])) {
+            return $GLOBALS['wsz_subs_paynl_card_transactions'];
+        }
+
+        if ('wsz_subs_test_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_test_card_transactions'])) {
+            return $GLOBALS['wsz_subs_test_card_transactions'];
+        }
+
         if ('wsz_subs_options' !== $option_name) {
             return $default;
         }

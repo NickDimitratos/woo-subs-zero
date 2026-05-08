@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.35] - 2026-05-08
+
+### Added
+
+- Added PAY.nl card transaction logging for initial token capture and recurring renewal charges.
+- Renamed the subscription admin transaction panel to Card Transactions and combined WSZ Test Card and PAY.nl card rows in one subscription view.
+
+### Tests
+
+- Added regression coverage for PAY.nl initial/renewal transaction logging and combined subscription transaction rendering.
+
 ## [0.1.34] - 2026-05-08
 
 ### Fixed

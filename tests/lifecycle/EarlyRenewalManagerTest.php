@@ -13,6 +13,10 @@ if (!function_exists('get_option')) {
             return $GLOBALS['wsz_subs_test_card_transactions'];
         }
 
+        if ('wsz_subs_paynl_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_paynl_card_transactions'])) {
+            return $GLOBALS['wsz_subs_paynl_card_transactions'];
+        }
+
         if (isset($GLOBALS['wsz_admin_test_options']) && is_array($GLOBALS['wsz_admin_test_options']) && array_key_exists($option_name, $GLOBALS['wsz_admin_test_options'])) {
             return $GLOBALS['wsz_admin_test_options'][$option_name];
         }
