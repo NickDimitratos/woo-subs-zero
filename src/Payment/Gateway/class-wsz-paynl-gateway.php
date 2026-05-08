@@ -205,12 +205,15 @@ class WSZ_PayNL_Gateway_Integration
             $this->log_diagnostic(
                 'warning',
                 __('PAY.nl recurring charge approved without a transaction identifier.', 'woo-subzero'),
-                array(
-                    'renewal_order_id' => $renewal_order->get_id(),
-                    'subscription_id' => $subscription->get_id(),
-                    'status_code' => $status_code,
-                    'response_keys' => WSZ_PayNL_Token_Support::payload_keys($decoded),
-                    'body_empty' => '' === trim($body) ? 'yes' : 'no',
+                array_merge(
+                    array(
+                        'renewal_order_id' => $renewal_order->get_id(),
+                        'subscription_id' => $subscription->get_id(),
+                        'status_code' => $status_code,
+                        'response_keys' => WSZ_PayNL_Token_Support::payload_keys($decoded),
+                        'body_empty' => '' === trim($body) ? 'yes' : 'no',
+                    ),
+                    $this->authorize_response_diagnostic_context($decoded)
                 )
             );
         }
@@ -932,6 +935,8 @@ class WSZ_PayNL_Gateway_Integration
             array(
                 'transactionId',
                 'transaction_id',
+                'transaction.transactionId',
+                'transaction.transaction_id',
                 'transaction.id',
                 'paymentSessionId',
                 'payment_session_id',
@@ -949,21 +954,35 @@ class WSZ_PayNL_Gateway_Integration
                 'id',
             )
         );
+        $request_result = $this->first_scalar($decoded, array('request.result', 'request_result'));
         $status = strtolower(
             $this->first_scalar(
                 $decoded,
                 array(
                     'state',
                     'status',
+                    'transaction.stateName',
+                    'transaction.state_name',
                     'transaction.status',
+                    'transaction.state',
+                    'status.action',
+                    'status.code',
                     'payment.status',
+                    'payment.bankMessage',
                     'result',
                 )
             )
         );
 
+        if ('0' === $request_result) {
+            return array(
+                'paid' => false,
+                'message' => $this->resolve_authorize_error_message($decoded),
+            );
+        }
+
         if ($status_code >= 200 && $status_code < 300) {
-            if ('' === $status || in_array($status, array('paid', 'success', 'approved', 'authorized', 'authorised', 'captured'), true)) {
+            if ('' === $status || $this->is_paid_authorize_status($status)) {
                 return array(
                     'paid' => true,
                     'transaction_id' => $transaction_id,
@@ -971,12 +990,72 @@ class WSZ_PayNL_Gateway_Integration
             }
         }
 
-        $message = $this->first_scalar($decoded, array('message', 'error.message', 'error_description', 'description'));
-
         return array(
             'paid' => false,
-            'message' => '' !== $message ? $message : __('PAY.nl recurring charge was not approved.', 'woo-subzero'),
+            'message' => $this->resolve_authorize_error_message($decoded),
         );
+    }
+
+    private function is_paid_authorize_status(string $status): bool
+    {
+        $status = strtolower(trim($status));
+
+        if ('100' === $status) {
+            return true;
+        }
+
+        return in_array($status, array('paid', 'success', 'approved', 'authorized', 'authorised', 'captured'), true);
+    }
+
+    /**
+     * @param array<string,mixed> $decoded
+     */
+    private function resolve_authorize_error_message(array $decoded): string
+    {
+        $message = $this->first_scalar(
+            $decoded,
+            array(
+                'request.errorMessage',
+                'request.error_message',
+                'request.errorTag',
+                'request.error_tag',
+                'message',
+                'error.message',
+                'error_description',
+                'description',
+            )
+        );
+
+        return '' !== $message ? $message : __('PAY.nl recurring charge was not approved.', 'woo-subzero');
+    }
+
+    /**
+     * @param array<string,mixed> $decoded
+     * @return array<string,string>
+     */
+    private function authorize_response_diagnostic_context(array $decoded): array
+    {
+        $context = array();
+        $fields = array(
+            'request_result' => array('request.result', 'request_result'),
+            'request_error_id' => array('request.errorId', 'request.error_id'),
+            'request_error_tag' => array('request.errorTag', 'request.error_tag'),
+            'request_error_message' => array('request.errorMessage', 'request.error_message'),
+            'transaction_state' => array('transaction.state'),
+            'transaction_state_name' => array('transaction.stateName', 'transaction.state_name'),
+            'payment_bank_code' => array('payment.bankCode', 'payment.bank_code'),
+            'payment_bank_message' => array('payment.bankMessage', 'payment.bank_message'),
+        );
+
+        foreach ($fields as $context_key => $paths) {
+            $value = $this->first_scalar($decoded, $paths);
+
+            if ('' !== $value) {
+                $context[$context_key] = $value;
+            }
+        }
+
+        return $context;
     }
 
     /**
