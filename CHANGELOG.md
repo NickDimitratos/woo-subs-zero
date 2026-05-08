@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.34] - 2026-05-08
+
+### Fixed
+
+- Delayed the PAY.nl missing recurring-token warning for paid parent orders so the separate PAY.nl token exchange can arrive before diagnostics are emitted.
+- Added a delayed PAY.nl parent-order token check that syncs a late-arriving recurring token to linked subscriptions.
+- Prevented internal PAY.nl diagnostic marker metadata from being considered chargeable recurring-token metadata.
+
+### Tests
+
+- Added regression coverage for delayed PAY.nl missing-token checks, late token sync, and internal marker metadata handling.
+
 ## [0.1.33] - 2026-05-08
 
 ### Fixed

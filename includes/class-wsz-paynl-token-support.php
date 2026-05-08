@@ -336,7 +336,12 @@ class WSZ_PayNL_Token_Support
             return false;
         }
 
+        if (0 === strpos($key, 'wsz_paynl_recurring_') && !in_array($key, array('wsz_paynl_recurring_id'), true)) {
+            return false;
+        }
+
         $exact_keys = array(
+            'wsz_paynl_recurring_id',
             'paynl_recurring_id',
             'paynl_recurringid',
             'paynl_recurring_reference',

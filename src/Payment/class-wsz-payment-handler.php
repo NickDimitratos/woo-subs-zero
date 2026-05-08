@@ -38,6 +38,7 @@ class WSZ_Payment_Handler
         add_action('woocommerce_order_status_processing', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 2);
         add_action('woocommerce_order_status_completed', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 2);
         add_action('wsz_subs_subscription_activated', array($this, 'sync_subscription_from_parent_order'), 20, 1);
+        add_action('wsz_subs_check_paynl_parent_order_token', array($this, 'process_delayed_paynl_parent_order_token_check'), 10, 1);
         add_filter('woocommerce_subscription_payment_meta', array($this, 'register_subscription_payment_meta'), 10, 2);
     }
 
@@ -403,7 +404,7 @@ class WSZ_Payment_Handler
         }
 
         if ($token_id <= 0) {
-            $this->maybe_log_missing_paynl_recurring_context($order, array_map('absint', $subscription_ids), $gateway_id);
+            $this->maybe_schedule_missing_paynl_recurring_context_check($order, array_map('absint', $subscription_ids), $gateway_id);
         }
 
         foreach ($subscription_ids as $subscription_id) {
@@ -461,7 +462,7 @@ class WSZ_Payment_Handler
         }
 
         if ($token_id <= 0) {
-            $this->maybe_log_missing_paynl_recurring_context($parent_order, array($subscription->get_id()), $gateway_id);
+            $this->maybe_schedule_missing_paynl_recurring_context_check($parent_order, array($subscription->get_id()), $gateway_id);
         }
 
         if ($token_id <= 0 && '' !== $gateway_id) {
@@ -506,6 +507,48 @@ class WSZ_Payment_Handler
         );
 
         return $payment_meta;
+    }
+
+    public function process_delayed_paynl_parent_order_token_check(int $order_id): void
+    {
+        if ($order_id <= 0 || !function_exists('wc_get_order')) {
+            return;
+        }
+
+        $order = wc_get_order($order_id);
+
+        if (!($order instanceof WC_Order)) {
+            return;
+        }
+
+        $subscription_ids = $order->get_meta('_wsz_subscription_ids', true);
+        $subscription_ids = is_array($subscription_ids) ? array_map('absint', $subscription_ids) : array();
+        $gateway_id = sanitize_key((string) $order->get_payment_method());
+        $token_id = $this->resolve_token_id_from_order($order);
+
+        if ($token_id <= 0) {
+            $token_id = $this->recover_paynl_token_id_from_order_meta($order, false);
+        }
+
+        if ($token_id <= 0) {
+            $this->maybe_log_missing_paynl_recurring_context($order, $subscription_ids, $gateway_id);
+            return;
+        }
+
+        $order->update_meta_data('_wsz_paynl_recurring_missing_logged', 'no');
+        $order->update_meta_data('_wsz_paynl_recurring_missing_check_scheduled', 'no');
+        $order->save();
+
+        foreach ($subscription_ids as $subscription_id) {
+            $subscription = $this->subscription_manager->get_subscription((int) $subscription_id);
+
+            if (!($subscription instanceof WC_Order)) {
+                continue;
+            }
+
+            $this->subscription_manager->copy_payment_context_meta($order, $subscription);
+            $this->update_subscription_payment_context($subscription, $token_id, $gateway_id);
+        }
     }
 
     /**
@@ -910,10 +953,16 @@ class WSZ_Payment_Handler
         return 0;
     }
 
-    private function recover_paynl_token_id_from_order_meta(WC_Order $order): int
+    private function recover_paynl_token_id_from_order_meta(WC_Order $order, bool $sync_subscriptions = true): int
     {
         if (!class_exists('WSZ_PayNL_Gateway_Integration')) {
             return 0;
+        }
+
+        if (!$sync_subscriptions) {
+            $paynl_gateway = new WSZ_PayNL_Gateway_Integration();
+
+            return $paynl_gateway->store_recurring_payment_token_from_order_meta($order);
         }
 
         if (!($this->paynl_gateway instanceof WSZ_PayNL_Gateway_Integration)) {
@@ -921,6 +970,63 @@ class WSZ_Payment_Handler
         }
 
         return $this->paynl_gateway->store_recurring_payment_token_from_order_meta($order);
+    }
+
+    /**
+     * @param array<int,int> $subscription_ids
+     */
+    private function maybe_schedule_missing_paynl_recurring_context_check(WC_Order $order, array $subscription_ids, string $gateway_id): void
+    {
+        $gateway_id = sanitize_key($gateway_id);
+
+        if (!$this->is_paynl_gateway_id($gateway_id) || !$this->are_paynl_tokens_enabled()) {
+            return;
+        }
+
+        if ('yes' === (string) $order->get_meta('_wsz_paynl_recurring_missing_logged', true)) {
+            return;
+        }
+
+        if ('yes' === (string) $order->get_meta('_wsz_paynl_recurring_missing_check_scheduled', true)) {
+            return;
+        }
+
+        if (!function_exists('as_schedule_single_action')) {
+            $this->maybe_log_missing_paynl_recurring_context($order, $subscription_ids, $gateway_id);
+            return;
+        }
+
+        $delay = (int) apply_filters('wsz_subs_paynl_missing_token_check_delay', 300, $order, $subscription_ids);
+        $delay = max(60, $delay);
+        $result = as_schedule_single_action(
+            time() + $delay,
+            'wsz_subs_check_paynl_parent_order_token',
+            array('order_id' => (int) $order->get_id()),
+            WSZ_Subscription_Manager::ACTION_GROUP,
+            false
+        );
+
+        $scheduled = is_numeric($result) ? (int) $result > 0 : true === $result;
+
+        if (!$scheduled) {
+            $this->maybe_log_missing_paynl_recurring_context($order, $subscription_ids, $gateway_id);
+            return;
+        }
+
+        try {
+            $order->update_meta_data('_wsz_paynl_recurring_missing_check_scheduled', 'yes');
+            $order->save();
+        } catch (Throwable $throwable) {
+            $this->log_diagnostic(
+                'warning',
+                __('PAY.nl delayed recurring-token check was scheduled, but the parent order marker could not be saved.', 'woo-subzero'),
+                array(
+                    'parent_order_id' => $order->get_id(),
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
+        }
     }
 
     /**
@@ -961,6 +1067,7 @@ class WSZ_Payment_Handler
 
         try {
             $order->update_meta_data('_wsz_paynl_recurring_missing_logged', 'yes');
+            $order->update_meta_data('_wsz_paynl_recurring_missing_check_scheduled', 'no');
             $order->save();
         } catch (Throwable $throwable) {
             $context['missing_log_dedupe_failed'] = $throwable->getMessage();

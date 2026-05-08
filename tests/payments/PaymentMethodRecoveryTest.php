@@ -30,6 +30,21 @@ if (!function_exists('update_option')) {
     }
 }
 
+if (!function_exists('as_schedule_single_action')) {
+    function as_schedule_single_action($timestamp, $hook, $args = array(), $group = '', $unique = false)
+    {
+        $GLOBALS['wsz_payment_method_test_scheduled_actions'][] = array(
+            'timestamp' => (int) $timestamp,
+            'hook' => (string) $hook,
+            'args' => $args,
+            'group' => (string) $group,
+            'unique' => (bool) $unique,
+        );
+
+        return count($GLOBALS['wsz_payment_method_test_scheduled_actions']);
+    }
+}
+
 if (!class_exists('WC_Payment_Token')) {
     class WC_Payment_Token
     {
@@ -105,6 +120,10 @@ final class PaymentMethodRecoveryTest extends TestCase
             'auto_restore_automatic_renewals' => 'yes',
         );
         $GLOBALS['wsz_admin_test_options'] = array();
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
+        $GLOBALS['wsz_payment_method_test_scheduled_actions'] = array();
+        $GLOBALS['wsz_test_scheduled_actions'] = array();
+        $GLOBALS['wsz_admin_test_scheduled'] = array();
 
         if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
             WC_Payment_Tokens::reset_test_tokens();
@@ -126,6 +145,9 @@ final class PaymentMethodRecoveryTest extends TestCase
         unset($GLOBALS['wsz_subs_test_options']);
         unset($GLOBALS['wsz_subs_test_orders']);
         unset($GLOBALS['wsz_admin_test_options']);
+        unset($GLOBALS['wsz_payment_method_test_scheduled_actions']);
+        unset($GLOBALS['wsz_test_scheduled_actions']);
+        unset($GLOBALS['wsz_admin_test_scheduled']);
         parent::tearDown();
     }
 
@@ -414,6 +436,7 @@ final class PaymentMethodRecoveryTest extends TestCase
     public function test_get_payment_token_for_subscription_recovers_paynl_token_from_parent_order_meta(): void
     {
         $GLOBALS['wsz_subs_test_options']['enable_paynl_tokens'] = 'yes';
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $handler = new WSZ_Payment_Handler($subscription_manager);
@@ -478,6 +501,7 @@ final class PaymentMethodRecoveryTest extends TestCase
     public function test_paid_paynl_parent_order_logs_when_recurring_token_is_missing(): void
     {
         $GLOBALS['wsz_subs_test_options']['enable_paynl_tokens'] = 'yes';
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $handler = new WSZ_Payment_Handler($subscription_manager);
@@ -488,6 +512,7 @@ final class PaymentMethodRecoveryTest extends TestCase
             array()
         );
         $parent_order->update_meta_data('_wsz_subscription_ids', array(10530));
+        $GLOBALS['wsz_subs_test_orders'][10529] = $parent_order;
 
         $subscription = $this->createMock(WC_Order::class);
         $subscription->method('get_id')->willReturn(10530);
@@ -509,12 +534,124 @@ final class PaymentMethodRecoveryTest extends TestCase
         $handler->sync_subscriptions_from_paid_parent_order($parent_order);
 
         $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+
+        $this->assertSame(array(), $logs);
+        $this->assertSame('yes', $parent_order->get_meta('_wsz_paynl_recurring_missing_check_scheduled', true));
+
+        $handler->process_delayed_paynl_parent_order_token_check(10529);
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
         $messages = array_column($logs, 'message');
 
         $this->assertContains('PAY.nl recurring token is not available on the paid parent order.', $messages);
         $this->assertSame('yes', $parent_order->get_meta('_wsz_paynl_recurring_missing_logged', true));
         $this->assertSame('no', $logs[0]['context']['parent_order_has_paynl_recurring_meta'] ?? '');
         $this->assertSame('10529', $logs[0]['context']['parent_order_id'] ?? '');
+    }
+
+    public function test_paid_paynl_parent_order_schedules_delayed_missing_token_check(): void
+    {
+        $GLOBALS['wsz_subs_test_options']['enable_paynl_tokens'] = 'yes';
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+        $parent_order = new PaymentMethodRecoveryPayNLParentOrder(
+            10658,
+            9,
+            WSZ_PayNL_Gateway_Integration::GATEWAY_ID,
+            array()
+        );
+        $parent_order->update_meta_data('_wsz_subscription_ids', array(10659));
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10659);
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(10659)
+            ->willReturn($subscription);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($parent_order, $subscription)
+            ->willReturn(false);
+        $subscription_manager
+            ->expects($this->never())
+            ->method('set_payment_token_id');
+
+        $handler->sync_subscriptions_from_paid_parent_order($parent_order);
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+
+        $this->assertSame(array(), $logs);
+        $this->assertSame('yes', $parent_order->get_meta('_wsz_paynl_recurring_missing_check_scheduled', true));
+        $scheduled_actions = $this->get_scheduled_actions();
+        $this->assertCount(1, $scheduled_actions);
+        $this->assertSame('wsz_subs_check_paynl_parent_order_token', $scheduled_actions[0]['hook']);
+        $this->assertSame(array('order_id' => 10658), $scheduled_actions[0]['args']);
+        $this->assertSame(WSZ_Subscription_Manager::ACTION_GROUP, $scheduled_actions[0]['group']);
+    }
+
+    public function test_delayed_paynl_parent_order_token_check_syncs_token_when_exchange_arrived(): void
+    {
+        $GLOBALS['wsz_subs_test_options']['enable_paynl_tokens'] = 'yes';
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Payment_Handler($subscription_manager);
+        $parent_order = new PaymentMethodRecoveryPayNLParentOrder(
+            10658,
+            9,
+            WSZ_PayNL_Gateway_Integration::GATEWAY_ID,
+            array(
+                array('key' => '_paynl_recurring_id', 'value' => 'VY-9212-9171-2390'),
+            )
+        );
+        $parent_order->update_meta_data('_wsz_subscription_ids', array(10659));
+        $parent_order->update_meta_data('_wsz_paynl_recurring_missing_check_scheduled', 'yes');
+        $GLOBALS['wsz_subs_test_orders'][10658] = $parent_order;
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10659);
+        $subscription
+            ->expects($this->once())
+            ->method('set_payment_method')
+            ->with(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $subscription
+            ->expects($this->once())
+            ->method('save');
+
+        $subscription_manager
+            ->expects($this->once())
+            ->method('get_subscription')
+            ->with(10659)
+            ->willReturn($subscription);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('copy_payment_context_meta')
+            ->with($parent_order, $subscription)
+            ->willReturn(true);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_payment_token_id')
+            ->with($subscription, $this->greaterThan(0));
+        $subscription_manager
+            ->expects($this->once())
+            ->method('set_manual_renewal')
+            ->with($subscription, false);
+
+        $handler->process_delayed_paynl_parent_order_token_check(10658);
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+        $messages = array_column($logs, 'message');
+
+        $this->assertContains('PAY.nl recurring token saved for subscription renewals.', $messages);
+        $this->assertGreaterThan(0, $parent_order->get_meta('_payment_token_id', true));
+        $this->assertSame('no', $parent_order->get_meta('_wsz_paynl_recurring_missing_logged', true));
+        $this->assertSame('no', $parent_order->get_meta('_wsz_paynl_recurring_missing_check_scheduled', true));
+        $this->assertCount(1, $parent_order->get_payment_tokens());
     }
 
     public function test_sync_subscriptions_from_paid_parent_order_updates_linked_subscription_payment_context(): void
@@ -581,6 +718,23 @@ final class PaymentMethodRecoveryTest extends TestCase
             ->method('save');
 
         $handler->sync_subscriptions_from_paid_parent_order($parent_order);
+    }
+
+    private function get_scheduled_actions(): array
+    {
+        if (!empty($GLOBALS['wsz_payment_method_test_scheduled_actions']) && is_array($GLOBALS['wsz_payment_method_test_scheduled_actions'])) {
+            return $GLOBALS['wsz_payment_method_test_scheduled_actions'];
+        }
+
+        if (!empty($GLOBALS['wsz_test_scheduled_actions']) && is_array($GLOBALS['wsz_test_scheduled_actions'])) {
+            return $GLOBALS['wsz_test_scheduled_actions'];
+        }
+
+        if (!empty($GLOBALS['wsz_admin_test_scheduled']) && is_array($GLOBALS['wsz_admin_test_scheduled'])) {
+            return $GLOBALS['wsz_admin_test_scheduled'];
+        }
+
+        return array();
     }
 
     public function test_sync_subscriptions_from_paid_parent_order_accepts_order_payment_token_objects(): void

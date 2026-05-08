@@ -2,6 +2,21 @@
 
 use PHPUnit\Framework\TestCase;
 
+if (!function_exists('get_option')) {
+    function get_option($option_name, $default = false)
+    {
+        if ('wsz_subs_options' === $option_name && isset($GLOBALS['wsz_subs_test_options'])) {
+            return $GLOBALS['wsz_subs_test_options'];
+        }
+
+        if (isset($GLOBALS['wsz_admin_test_options']) && is_array($GLOBALS['wsz_admin_test_options']) && array_key_exists($option_name, $GLOBALS['wsz_admin_test_options'])) {
+            return $GLOBALS['wsz_admin_test_options'][$option_name];
+        }
+
+        return $default;
+    }
+}
+
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-payment-token.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-gateway.php';
@@ -408,6 +423,33 @@ final class PayNLGatewayIntegrationTest extends TestCase
                     array(
                         'key' => '_paynl_recurring_token',
                         'value' => 'c1747bf4d38cd6af76ca0d2ffe373987b666305e27dd8b5501a5facf90a99bffe',
+                    ),
+                )
+            );
+        $order
+            ->expects($this->never())
+            ->method('update_meta_data');
+
+        $this->assertSame(0, $integration->store_recurring_payment_token_from_order_meta($order));
+    }
+
+    public function test_paynl_token_recovery_ignores_internal_missing_token_markers(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $order = $this->createMock(WC_Order::class);
+        $order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $order
+            ->method('get_meta_data')
+            ->willReturn(
+                array(
+                    array(
+                        'key' => '_wsz_paynl_recurring_missing_logged',
+                        'value' => 'yes',
+                    ),
+                    array(
+                        'key' => '_wsz_paynl_recurring_missing_check_scheduled',
+                        'value' => 'yes',
                     ),
                 )
             );
