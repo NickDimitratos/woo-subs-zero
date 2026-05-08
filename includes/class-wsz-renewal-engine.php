@@ -450,6 +450,7 @@ class WSZ_Renewal_Engine
         }
 
         $this->copy_payment_context_to_renewal($subscription, $renewal_order);
+        $this->clear_inherited_transaction_context($renewal_order);
 
         $renewal_order->update_meta_data('_wsz_subscription_id', $subscription->get_id());
         $renewal_order->save();
@@ -475,6 +476,15 @@ class WSZ_Renewal_Engine
 
         $this->subscription_manager->copy_payment_context_meta($parent_order, $renewal_order);
         $this->copy_resolved_payment_token_to_renewal($subscription, $renewal_order);
+    }
+
+    private function clear_inherited_transaction_context(WC_Order $renewal_order): void
+    {
+        foreach (array('_transaction_id', 'transaction_id', 'transactionId', 'transactionid') as $meta_key) {
+            if (is_callable(array($renewal_order, 'delete_meta_data'))) {
+                $renewal_order->delete_meta_data($meta_key);
+            }
+        }
     }
 
     private function copy_resolved_payment_token_to_renewal(WC_Order $subscription, WC_Order $renewal_order): void

@@ -1521,6 +1521,55 @@ final class RenewalEngineTest extends TestCase
         $this->assertSame('EUR', $renewal_order->get_currency());
     }
 
+    public function test_create_renewal_order_clears_inherited_transaction_id(): void
+    {
+        $subscription = $this->create_context_order(
+            930,
+            array($this->create_test_line_item()),
+            array(
+                'customer_id' => 22,
+                'payment_method' => 'pay_gateway_creditcardsgrouped',
+                'payment_method_title' => 'PAY.nl',
+                'currency' => 'EUR',
+                'total' => 29.5,
+            )
+        );
+
+        $renewal_order = $this->create_context_order(
+            446,
+            array($this->create_test_line_item()),
+            array(
+                'meta' => array(
+                    '_transaction_id' => 'INITIAL-PARENT-TX',
+                ),
+            )
+        );
+
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $renewal_order;
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->method('copy_payment_context_meta')
+            ->willReturn(false);
+        $subscription_manager
+            ->expects($this->once())
+            ->method('add_related_order')
+            ->with($subscription, 446, 'renewal');
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+        $retry_manager = $this->createMock(WSZ_Retry_Manager::class);
+
+        $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
+
+        $method = new ReflectionMethod(WSZ_Renewal_Engine::class, 'create_renewal_order');
+        $method->setAccessible(true);
+
+        $this->assertSame($renewal_order, $method->invoke($engine, $subscription));
+        $this->assertSame('', $renewal_order->get_meta('_transaction_id', true));
+    }
+
     public function test_native_renewal_order_hydrates_customer_context_from_subscription(): void
     {
         $subscription_item = $this->create_test_line_item();
@@ -1753,6 +1802,11 @@ final class RenewalEngineTest extends TestCase
             public function update_meta_data($key, $value)
             {
                 $this->meta[$key] = $value;
+            }
+
+            public function delete_meta_data($key)
+            {
+                unset($this->meta[$key]);
             }
 
             public function get_billing_first_name()

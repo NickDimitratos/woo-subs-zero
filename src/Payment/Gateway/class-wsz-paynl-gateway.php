@@ -286,10 +286,6 @@ class WSZ_PayNL_Gateway_Integration
             return;
         }
 
-        if ('' === $transaction_id && is_callable(array($renewal_order, 'get_transaction_id'))) {
-            $transaction_id = (string) $renewal_order->get_transaction_id();
-        }
-
         self::record_transaction(
             $renewal_order,
             'renewal',

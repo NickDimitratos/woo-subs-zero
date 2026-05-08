@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.37] - 2026-05-08
+
+### Fixed
+
+- Stopped copying one-off transaction IDs from parent/subscription payment context into renewal orders.
+- Cleared inherited transaction ID metadata when finalizing renewal orders, so renewals do not reuse the initial payment transaction number.
+- Avoided using an existing renewal order transaction ID as a PAY.nl renewal transaction fallback when PAY.nl does not provide a fresh renewal identifier.
+
+### Tests
+
+- Added regression coverage for transaction ID inheritance prevention on payment-context copies and renewal order creation.
+
 ## [0.1.36] - 2026-05-08
 
 ### Fixed

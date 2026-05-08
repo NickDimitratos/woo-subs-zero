@@ -32,6 +32,10 @@ if (!function_exists('get_option')) {
             return $GLOBALS['wsz_subs_test_card_transactions'];
         }
 
+        if (isset($GLOBALS['wsz_admin_test_options']) && is_array($GLOBALS['wsz_admin_test_options']) && array_key_exists($option_name, $GLOBALS['wsz_admin_test_options'])) {
+            return $GLOBALS['wsz_admin_test_options'][$option_name];
+        }
+
         if ('wsz_subs_options' !== $option_name) {
             return $default;
         }
@@ -527,7 +531,7 @@ final class SubscriptionManagerTest extends TestCase
         $manager->activate_deferred_subscription(1202);
     }
 
-    public function test_copy_payment_context_meta_copies_gateway_keys_only(): void
+    public function test_copy_payment_context_meta_copies_reusable_gateway_keys_only(): void
     {
         $manager = new WSZ_Subscription_Manager();
 
@@ -539,6 +543,7 @@ final class SubscriptionManagerTest extends TestCase
                     array('key' => 'customerkey', 'value' => 'cust_123'),
                     array('key' => '_payment_token_id', 'value' => '456'),
                     array('key' => '_transaction_id', 'value' => 'tx_789'),
+                    array('key' => 'transactionId', 'value' => 'PAYNL-INITIAL-1'),
                     array('key' => '_wsz_next_schedule_key', 'value' => 'internal'),
                     array('key' => '_order_total', 'value' => '99.00'),
                 )
@@ -547,7 +552,7 @@ final class SubscriptionManagerTest extends TestCase
         $copied = array();
         $target = $this->createMock(WC_Order::class);
         $target
-            ->expects($this->exactly(3))
+            ->expects($this->exactly(2))
             ->method('update_meta_data')
             ->willReturnCallback(
                 static function ($key, $value) use (&$copied): void {
@@ -560,7 +565,6 @@ final class SubscriptionManagerTest extends TestCase
             array(
                 'customerkey' => 'cust_123',
                 '_payment_token_id' => '456',
-                '_transaction_id' => 'tx_789',
             ),
             $copied
         );
