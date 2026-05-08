@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.33] - 2026-05-08
+
+### Fixed
+
+- Read PAY.nl recurring credentials from the official PAY.nl WooCommerce plugin helper, `PAYNL_*` constants, and global `paynl_*` options so tokenized renewals do not fail with “PAY.nl recurring credentials are not configured” when PAY.nl itself is configured.
+- Kept renewal failure cleanup running when payment dispatch hooks throw format-string exceptions, so failed renewal orders still move through failure handling and retry queueing.
+
+### Tests
+
+- Added regression coverage for PAY.nl plugin credential resolution and dispatch exceptions during renewal payment processing.
+
 ## [0.1.32] - 2026-05-05
 
 ### Fixed

@@ -16,6 +16,26 @@ if (!class_exists('PPMFWC_Helper_Transaction')) {
     }
 }
 
+if (!class_exists('PPMFWC_Helper_Config')) {
+    class PPMFWC_Helper_Config
+    {
+        public static function getTokenCode(): string
+        {
+            return (string) ($GLOBALS['wsz_paynl_test_plugin_credentials']['token_code'] ?? '');
+        }
+
+        public static function getApiToken(): string
+        {
+            return (string) ($GLOBALS['wsz_paynl_test_plugin_credentials']['api_token'] ?? '');
+        }
+
+        public static function getServiceId(): string
+        {
+            return (string) ($GLOBALS['wsz_paynl_test_plugin_credentials']['service_id'] ?? '');
+        }
+    }
+}
+
 final class PayNLGatewayIntegrationTest extends TestCase
 {
     protected function setUp(): void
@@ -28,6 +48,8 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $GLOBALS['wsz_subs_test_options'] = array(
             'enable_paynl_tokens' => 'yes',
         );
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array();
 
         if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
             WC_Payment_Tokens::reset_test_tokens();
@@ -40,6 +62,8 @@ final class PayNLGatewayIntegrationTest extends TestCase
         unset($GLOBALS['wsz_subs_test_order_queries']);
         unset($GLOBALS['wsz_paynl_test_transactions']);
         unset($GLOBALS['wsz_subs_test_options']);
+        unset($GLOBALS['wsz_admin_test_options']['wsz_subs_options']);
+        unset($GLOBALS['wsz_paynl_test_plugin_credentials']);
 
         parent::tearDown();
     }
@@ -57,6 +81,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
     public function test_integration_is_disabled_by_default(): void
     {
         unset($GLOBALS['wsz_subs_test_options']);
+        unset($GLOBALS['wsz_admin_test_options']['wsz_subs_options']);
 
         $integration = new WSZ_PayNL_Gateway_Integration();
 
@@ -108,6 +133,34 @@ final class PayNLGatewayIntegrationTest extends TestCase
 
         $this->assertFalse($result['paid']);
         $this->assertStringContainsString('credentials', $result['message']);
+    }
+
+    public function test_recurring_charge_uses_paynl_plugin_credentials(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $renewal_order
+            ->method('get_payment_method')
+            ->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $this->assertFalse($result['paid']);
+        $this->assertStringContainsString('HTTP API', $result['message']);
     }
 
     public function test_authorize_payload_uses_merchant_initiated_token_payment(): void

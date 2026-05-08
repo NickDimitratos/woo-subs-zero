@@ -633,6 +633,7 @@ class WSZ_PayNL_Gateway_Integration
     {
         $gateway_id = sanitize_key((string) $renewal_order->get_payment_method());
         $settings = $this->get_gateway_settings($gateway_id);
+        $paynl_settings = $this->get_paynl_plugin_credentials();
 
         $credentials = array(
             'service_id' => $this->first_setting($settings, array('service_id', 'serviceId', 'service', 'service_location_id', 'sales_location_id')),
@@ -640,7 +641,68 @@ class WSZ_PayNL_Gateway_Integration
             'password' => $this->first_setting($settings, array('api_password', 'password', 'token', 'api_token', 'apitoken', 'secret', 'api_secret')),
         );
 
+        foreach (array('service_id', 'username', 'password') as $key) {
+            if ('' === $credentials[$key] && '' !== ($paynl_settings[$key] ?? '')) {
+                $credentials[$key] = $paynl_settings[$key];
+            }
+        }
+
         return apply_filters('wsz_subs_paynl_recurring_credentials', $credentials, $renewal_order, $subscription, $settings);
+    }
+
+    /**
+     * @return array{service_id:string,username:string,password:string}
+     */
+    private function get_paynl_plugin_credentials(): array
+    {
+        $credentials = array(
+            'service_id' => '',
+            'username' => '',
+            'password' => '',
+        );
+
+        if (class_exists('PPMFWC_Helper_Config')) {
+            if (is_callable(array('PPMFWC_Helper_Config', 'getServiceId'))) {
+                $credentials['service_id'] = trim((string) PPMFWC_Helper_Config::getServiceId());
+            }
+
+            if (is_callable(array('PPMFWC_Helper_Config', 'getTokenCode'))) {
+                $credentials['username'] = trim((string) PPMFWC_Helper_Config::getTokenCode());
+            }
+
+            if (is_callable(array('PPMFWC_Helper_Config', 'getApiToken'))) {
+                $credentials['password'] = trim((string) PPMFWC_Helper_Config::getApiToken());
+            }
+        }
+
+        if ('' === $credentials['service_id']) {
+            $credentials['service_id'] = $this->get_paynl_constant_or_option('PAYNL_SERVICE_ID', 'paynl_serviceid');
+        }
+
+        if ('' === $credentials['username']) {
+            $credentials['username'] = $this->get_paynl_constant_or_option('PAYNL_TOKEN_CODE', 'paynl_tokencode');
+        }
+
+        if ('' === $credentials['password']) {
+            $credentials['password'] = $this->get_paynl_constant_or_option('PAYNL_API_TOKEN', 'paynl_apitoken');
+        }
+
+        return $credentials;
+    }
+
+    private function get_paynl_constant_or_option(string $constant_name, string $option_name): string
+    {
+        if (defined($constant_name) && is_scalar(constant($constant_name)) && '' !== (string) constant($constant_name)) {
+            return trim((string) constant($constant_name));
+        }
+
+        if (!function_exists('get_option')) {
+            return '';
+        }
+
+        $value = get_option($option_name, '');
+
+        return is_scalar($value) ? trim((string) $value) : '';
     }
 
     /**
