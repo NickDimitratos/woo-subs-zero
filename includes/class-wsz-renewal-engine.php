@@ -175,7 +175,7 @@ class WSZ_Renewal_Engine
                 $renewal_order->save();
             }
 
-            $this->payment_handler->dispatch_scheduled_payment($subscription, $renewal_order, $amount);
+            $this->safe_dispatch_scheduled_payment($subscription, $renewal_order, $amount);
 
             if ($this->subscription_manager->is_manual_renewal($subscription)) {
                 if (!$renewal_order->has_status(array('pending'))) {
@@ -1005,6 +1005,31 @@ class WSZ_Renewal_Engine
             if (function_exists('wc_get_logger')) {
                 wc_get_logger()->warning(
                     sprintf('Failed to mark renewal order %d as %s: %s', $renewal_order->get_id(), $status, $throwable->getMessage()),
+                    array('source' => 'woo-subzero')
+                );
+            }
+        }
+    }
+
+    private function safe_dispatch_scheduled_payment(WC_Order $subscription, WC_Order $renewal_order, float $amount): void
+    {
+        try {
+            $this->payment_handler->dispatch_scheduled_payment($subscription, $renewal_order, $amount);
+        } catch (Throwable $throwable) {
+            $this->log_diagnostic(
+                'warning',
+                __('Scheduled renewal payment dispatch failed.', 'woo-subzero'),
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'reason' => $throwable->getMessage(),
+                    'exception_class' => get_class($throwable),
+                )
+            );
+
+            if (function_exists('wc_get_logger')) {
+                wc_get_logger()->warning(
+                    sprintf('Scheduled renewal payment dispatch failed for renewal order %d: %s', $renewal_order->get_id(), $throwable->getMessage()),
                     array('source' => 'woo-subzero')
                 );
             }
