@@ -151,6 +151,8 @@ class WSZ_Tokenized_Gateway
                 $this->complete_paid_renewal_order($renewal_order, $transaction_id);
             }
 
+            $this->record_paid_renewal_transaction($subscription, $renewal_order, (float) $amount, $transaction_id);
+
             return;
         }
 
@@ -196,6 +198,25 @@ class WSZ_Tokenized_Gateway
             }
 
             throw $throwable;
+        }
+    }
+
+    private function record_paid_renewal_transaction(
+        WC_Order $subscription,
+        WC_Order $renewal_order,
+        float $amount,
+        string $transaction_id
+    ): void {
+        if (
+            class_exists('WSZ_PayNL_Gateway_Integration')
+            && is_callable(array('WSZ_PayNL_Gateway_Integration', 'record_renewal_transaction'))
+        ) {
+            WSZ_PayNL_Gateway_Integration::record_renewal_transaction(
+                $renewal_order,
+                $subscription,
+                $amount,
+                $transaction_id
+            );
         }
     }
 

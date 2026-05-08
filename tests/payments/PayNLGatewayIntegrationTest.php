@@ -483,12 +483,16 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('EX-2345-2238-9812', $transactions[0]['transaction_id'] ?? '');
     }
 
-    public function test_paynl_recurring_charge_logs_renewal_card_transaction_for_subscription(): void
+    public function test_paynl_recurring_charge_reads_transaction_id_alias_from_response(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
             'token_code' => 'AT-1234-5678',
             'api_token' => 'test-api-token',
             'service_id' => 'SL-1234-5678',
+        );
+        $GLOBALS['wsz_paynl_test_http_response'] = array(
+            'response' => array('code' => 200),
+            'body' => '{"state":"paid","id":"PAY-ID-ALIAS-1"}',
         );
 
         $integration = new WSZ_PayNL_Gateway_Integration();
@@ -519,13 +523,9 @@ final class PayNLGatewayIntegrationTest extends TestCase
             $subscription
         );
 
-        $transactions = WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10);
-
         $this->assertTrue($result['paid']);
-        $this->assertCount(1, $transactions);
-        $this->assertSame('renewal', $transactions[0]['context'] ?? '');
-        $this->assertSame('PAY-RENEWAL-1', $transactions[0]['transaction_id'] ?? '');
-        $this->assertSame(10488, (int) ($transactions[0]['order_id'] ?? 0));
+        $this->assertSame('PAY-ID-ALIAS-1', $result['transaction_id'] ?? '');
+        $this->assertSame(array(), WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10));
     }
 
     public function test_paynl_token_can_be_recovered_from_parent_order_meta(): void
