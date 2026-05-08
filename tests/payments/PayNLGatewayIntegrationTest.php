@@ -107,6 +107,11 @@ if (!class_exists('PPMFWC_Helper_Config')) {
         {
             return (string) ($GLOBALS['wsz_paynl_test_plugin_credentials']['service_id'] ?? '');
         }
+
+        public static function getServiceSecret(): string
+        {
+            return (string) ($GLOBALS['wsz_paynl_test_plugin_credentials']['service_secret'] ?? '');
+        }
     }
 }
 
@@ -245,6 +250,73 @@ final class PayNLGatewayIntegrationTest extends TestCase
 
         $this->assertTrue($result['paid']);
         $this->assertNotEmpty($GLOBALS['wsz_paynl_test_http_requests']);
+    }
+
+    public function test_recurring_charge_prefers_service_secret_for_card_authorize(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+            'service_secret' => 'sales-location-secret',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $renewal_order
+            ->method('get_payment_method')
+            ->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $request = $GLOBALS['wsz_paynl_test_http_requests'][0] ?? array();
+
+        $this->assertTrue($result['paid']);
+        $this->assertSame(
+            'Basic ' . base64_encode('SL-1234-5678:sales-location-secret'),
+            $request['args']['headers']['Authorization'] ?? ''
+        );
+    }
+
+    public function test_recurring_charge_falls_back_to_api_token_when_service_secret_missing(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $renewal_order
+            ->method('get_payment_method')
+            ->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $request = $GLOBALS['wsz_paynl_test_http_requests'][0] ?? array();
+
+        $this->assertTrue($result['paid']);
+        $this->assertSame(
+            'Basic ' . base64_encode('AT-1234-5678:test-api-token'),
+            $request['args']['headers']['Authorization'] ?? ''
+        );
     }
 
     public function test_authorize_payload_uses_merchant_initiated_token_payment(): void
