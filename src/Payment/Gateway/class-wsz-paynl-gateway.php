@@ -662,6 +662,26 @@ class WSZ_PayNL_Gateway_Integration
      */
     private function resolve_initial_transaction_id(WC_Order $order, array $payload): string
     {
+        $payload_transaction_id = $this->first_scalar(
+            $payload,
+            array(
+                'transactionid',
+                'transactionId',
+                'transaction_id',
+                'transaction.id',
+                'payment.id',
+                'paymentId',
+                'payment_id',
+                'paymentSessionId',
+                'payment_session_id',
+                'id',
+            )
+        );
+
+        if ('' !== $payload_transaction_id) {
+            return $payload_transaction_id;
+        }
+
         if (is_callable(array($order, 'get_transaction_id'))) {
             $order_transaction_id = (string) $order->get_transaction_id();
 
@@ -670,20 +690,7 @@ class WSZ_PayNL_Gateway_Integration
             }
         }
 
-        return $this->first_scalar(
-            $payload,
-            array(
-                'transactionId',
-                'transaction_id',
-                'transaction.id',
-                'paymentSessionId',
-                'payment_session_id',
-                'order_id',
-                'orderid',
-                'payment.id',
-                'id',
-            )
-        );
+        return '';
     }
 
     /**

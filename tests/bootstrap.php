@@ -267,6 +267,11 @@ if (!class_exists('WC_Order')) {
         {
         }
 
+        public function get_transaction_id()
+        {
+            return '';
+        }
+
         public function add_order_note($note)
         {
         }
