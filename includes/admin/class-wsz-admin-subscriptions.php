@@ -376,9 +376,9 @@ class WSZ_Admin_Subscriptions
             );
 
             add_meta_box(
-                'wsz_subs_test_card_transactions',
-                __('WSZ Test Card Transactions', 'woo-subzero'),
-                array($this, 'render_test_card_transactions_meta_box'),
+                'wsz_subs_card_transactions',
+                __('Card Transactions', 'woo-subzero'),
+                array($this, 'render_card_transactions_meta_box'),
                 $screen_id,
                 'normal',
                 'default'
@@ -592,6 +592,14 @@ class WSZ_Admin_Subscriptions
      */
     public function render_test_card_transactions_meta_box($post_or_order): void
     {
+        $this->render_card_transactions_meta_box($post_or_order);
+    }
+
+    /**
+     * @param mixed $post_or_order
+     */
+    public function render_card_transactions_meta_box($post_or_order): void
+    {
         $subscription = $this->resolve_subscription_from_meta_box_subject($post_or_order);
 
         if (!($subscription instanceof WC_Order)) {
@@ -600,11 +608,11 @@ class WSZ_Admin_Subscriptions
         }
 
         $subscription_id = (int) $subscription->get_id();
-        $transactions = $this->get_test_card_transactions($subscription_id, 30);
+        $transactions = $this->get_card_transactions($subscription_id, 30);
 
         if (empty($transactions)) {
-            echo '<p>' . esc_html__('No WSZ Test Card transactions logged yet for this subscription.', 'woo-subzero') . '</p>';
-            echo '<p class="description">' . esc_html__('In test mode with 1-minute cycles, a new renewal transaction should appear roughly every minute.', 'woo-subzero') . '</p>';
+            echo '<p>' . esc_html__('No card transactions logged yet for this subscription.', 'woo-subzero') . '</p>';
+            echo '<p class="description">' . esc_html__('PAY.nl and WSZ Test Card renewals appear here after a card charge is recorded.', 'woo-subzero') . '</p>';
             return;
         }
 
@@ -612,6 +620,7 @@ class WSZ_Admin_Subscriptions
         echo '<thead><tr>';
         echo '<th>' . esc_html__('Local Time', 'woo-subzero') . '</th>';
         echo '<th>' . esc_html__('UTC Time', 'woo-subzero') . '</th>';
+        echo '<th>' . esc_html__('Gateway', 'woo-subzero') . '</th>';
         echo '<th>' . esc_html__('Context', 'woo-subzero') . '</th>';
         echo '<th>' . esc_html__('Order ID', 'woo-subzero') . '</th>';
         echo '<th>' . esc_html__('Amount', 'woo-subzero') . '</th>';
@@ -626,6 +635,7 @@ class WSZ_Admin_Subscriptions
             echo '<tr>';
             echo '<td>' . esc_html((string) ($row['recorded_at_local'] ?? '')) . '</td>';
             echo '<td>' . esc_html((string) ($row['recorded_at_gmt'] ?? '')) . '</td>';
+            echo '<td>' . esc_html((string) ($row['gateway'] ?? 'WSZ Test Card')) . '</td>';
             echo '<td>' . esc_html((string) ($row['context'] ?? '')) . '</td>';
             echo '<td>' . esc_html((string) ((int) ($row['order_id'] ?? 0))) . '</td>';
             echo '<td>' . esc_html((string) $amount . ($currency !== '' ? ' ' . $currency : '')) . '</td>';
@@ -749,6 +759,57 @@ class WSZ_Admin_Subscriptions
         }
 
         return WSZ_Test_Card_Gateway_Integration::get_transactions($subscription_id, $limit);
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    public function get_card_transactions(int $subscription_id, int $limit = 30): array
+    {
+        if ($subscription_id <= 0) {
+            return array();
+        }
+
+        $transactions = array();
+
+        foreach ($this->get_test_card_transactions($subscription_id, 0) as $transaction) {
+            if (is_array($transaction)) {
+                $transaction['gateway'] = (string) ($transaction['gateway'] ?? 'WSZ Test Card');
+                $transactions[] = $transaction;
+            }
+        }
+
+        foreach ($this->get_paynl_card_transactions($subscription_id, 0) as $transaction) {
+            if (is_array($transaction)) {
+                $transaction['gateway'] = (string) ($transaction['gateway'] ?? 'PAY.nl');
+                $transactions[] = $transaction;
+            }
+        }
+
+        usort(
+            $transactions,
+            static function (array $left, array $right): int {
+                return strcmp((string) ($right['recorded_at_gmt'] ?? ''), (string) ($left['recorded_at_gmt'] ?? ''));
+            }
+        );
+
+        if ($limit > 0) {
+            $transactions = array_slice($transactions, 0, $limit);
+        }
+
+        return $transactions;
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    public function get_paynl_card_transactions(int $subscription_id, int $limit = 30): array
+    {
+        if ($subscription_id <= 0 || !class_exists('WSZ_PayNL_Gateway_Integration')) {
+            return array();
+        }
+
+        return WSZ_PayNL_Gateway_Integration::get_transactions($subscription_id, $limit);
     }
 
     /**
@@ -1008,7 +1069,7 @@ class WSZ_Admin_Subscriptions
         $filtered['wsz_next_renewal'] = __('Next Renewal', 'woo-subzero');
         $filtered['wsz_upcoming_renewals'] = __('Queued Renewals', 'woo-subzero');
         $filtered['wsz_renewal_orders'] = __('Renewal Orders', 'woo-subzero');
-        $filtered['wsz_last_test_card_tx'] = __('Last Test Card Tx', 'woo-subzero');
+        $filtered['wsz_last_card_tx'] = __('Last Card Tx', 'woo-subzero');
         $filtered['wsz_manual_renewal'] = __('Renewal Mode', 'woo-subzero');
 
         if (isset($columns['order_date'])) {
@@ -1040,7 +1101,7 @@ class WSZ_Admin_Subscriptions
         $subscription = $this->subscription_manager->get_subscription($post_id);
 
         if (!($subscription instanceof WC_Order)) {
-            if (in_array($column, array('wsz_next_renewal', 'wsz_upcoming_renewals', 'wsz_renewal_orders', 'wsz_last_test_card_tx', 'wsz_manual_renewal'), true)) {
+            if (in_array($column, array('wsz_next_renewal', 'wsz_upcoming_renewals', 'wsz_renewal_orders', 'wsz_last_card_tx', 'wsz_manual_renewal'), true)) {
                 echo esc_html__('n/a', 'woo-subzero');
             }
 
@@ -1072,8 +1133,8 @@ class WSZ_Admin_Subscriptions
                 echo esc_html((string) count($this->subscription_manager->get_related_orders($subscription, 'renewal')));
                 return;
 
-            case 'wsz_last_test_card_tx':
-                $transactions = $this->get_test_card_transactions((int) $subscription->get_id(), 1);
+            case 'wsz_last_card_tx':
+                $transactions = $this->get_card_transactions((int) $subscription->get_id(), 1);
 
                 if (empty($transactions)) {
                     echo esc_html__('None', 'woo-subzero');

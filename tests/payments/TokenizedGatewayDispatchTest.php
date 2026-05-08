@@ -10,6 +10,14 @@ require_once dirname(__DIR__, 2) . '/src/Payment/class-wsz-payment-handler.php';
 if (!function_exists('get_option')) {
     function get_option($option_name, $default = false)
     {
+        if ('wsz_subs_paynl_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_paynl_card_transactions'])) {
+            return $GLOBALS['wsz_subs_paynl_card_transactions'];
+        }
+
+        if ('wsz_subs_test_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_test_card_transactions'])) {
+            return $GLOBALS['wsz_subs_test_card_transactions'];
+        }
+
         if (isset($GLOBALS['wsz_admin_test_options']) && is_array($GLOBALS['wsz_admin_test_options']) && array_key_exists($option_name, $GLOBALS['wsz_admin_test_options'])) {
             return $GLOBALS['wsz_admin_test_options'][$option_name];
         }
@@ -21,6 +29,14 @@ if (!function_exists('get_option')) {
 if (!function_exists('update_option')) {
     function update_option($option_name, $value, $autoload = null)
     {
+        if ('wsz_subs_paynl_card_transactions' === $option_name) {
+            $GLOBALS['wsz_subs_paynl_card_transactions'] = is_array($value) ? $value : array();
+        }
+
+        if ('wsz_subs_test_card_transactions' === $option_name) {
+            $GLOBALS['wsz_subs_test_card_transactions'] = is_array($value) ? $value : array();
+        }
+
         if (!isset($GLOBALS['wsz_admin_test_options']) || !is_array($GLOBALS['wsz_admin_test_options'])) {
             $GLOBALS['wsz_admin_test_options'] = array();
         }

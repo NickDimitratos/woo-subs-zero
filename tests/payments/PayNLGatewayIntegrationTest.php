@@ -9,11 +9,69 @@ if (!function_exists('get_option')) {
             return $GLOBALS['wsz_subs_test_options'];
         }
 
+        if ('wsz_subs_paynl_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_paynl_card_transactions'])) {
+            return $GLOBALS['wsz_subs_paynl_card_transactions'];
+        }
+
+        if ('wsz_subs_test_card_transactions' === $option_name && isset($GLOBALS['wsz_subs_test_card_transactions'])) {
+            return $GLOBALS['wsz_subs_test_card_transactions'];
+        }
+
         if (isset($GLOBALS['wsz_admin_test_options']) && is_array($GLOBALS['wsz_admin_test_options']) && array_key_exists($option_name, $GLOBALS['wsz_admin_test_options'])) {
             return $GLOBALS['wsz_admin_test_options'][$option_name];
         }
 
         return $default;
+    }
+}
+
+if (!function_exists('update_option')) {
+    function update_option($option_name, $value, $autoload = null)
+    {
+        if ('wsz_subs_paynl_card_transactions' === $option_name) {
+            $GLOBALS['wsz_subs_paynl_card_transactions'] = is_array($value) ? $value : array();
+        }
+
+        if ('wsz_subs_test_card_transactions' === $option_name) {
+            $GLOBALS['wsz_subs_test_card_transactions'] = is_array($value) ? $value : array();
+        }
+
+        if (!isset($GLOBALS['wsz_admin_test_options']) || !is_array($GLOBALS['wsz_admin_test_options'])) {
+            $GLOBALS['wsz_admin_test_options'] = array();
+        }
+
+        $GLOBALS['wsz_admin_test_options'][$option_name] = $value;
+
+        return true;
+    }
+}
+
+if (!function_exists('wp_remote_post')) {
+    function wp_remote_post($url, $args = array())
+    {
+        $GLOBALS['wsz_paynl_test_http_requests'][] = array(
+            'url' => (string) $url,
+            'args' => $args,
+        );
+
+        return $GLOBALS['wsz_paynl_test_http_response'] ?? array(
+            'response' => array('code' => 200),
+            'body' => '{"state":"paid","transactionId":"PAY-RENEWAL-1"}',
+        );
+    }
+}
+
+if (!function_exists('wp_remote_retrieve_response_code')) {
+    function wp_remote_retrieve_response_code($response)
+    {
+        return (int) ($response['response']['code'] ?? 0);
+    }
+}
+
+if (!function_exists('wp_remote_retrieve_body')) {
+    function wp_remote_retrieve_body($response)
+    {
+        return (string) ($response['body'] ?? '');
     }
 }
 
@@ -60,10 +118,14 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $GLOBALS['wsz_subs_test_orders'] = array();
         $GLOBALS['wsz_subs_test_order_queries'] = array();
         $GLOBALS['wsz_paynl_test_transactions'] = array();
+        $GLOBALS['wsz_subs_paynl_card_transactions'] = array();
+        $GLOBALS['wsz_paynl_test_http_requests'] = array();
+        unset($GLOBALS['wsz_paynl_test_http_response']);
         $GLOBALS['wsz_subs_test_options'] = array(
             'enable_paynl_tokens' => 'yes',
         );
         $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_paynl_card_transactions'] = array();
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array();
 
         if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
@@ -76,8 +138,12 @@ final class PayNLGatewayIntegrationTest extends TestCase
         unset($GLOBALS['wsz_subs_test_orders']);
         unset($GLOBALS['wsz_subs_test_order_queries']);
         unset($GLOBALS['wsz_paynl_test_transactions']);
+        unset($GLOBALS['wsz_subs_paynl_card_transactions']);
+        unset($GLOBALS['wsz_paynl_test_http_requests']);
+        unset($GLOBALS['wsz_paynl_test_http_response']);
         unset($GLOBALS['wsz_subs_test_options']);
         unset($GLOBALS['wsz_admin_test_options']['wsz_subs_options']);
+        unset($GLOBALS['wsz_admin_test_options']['wsz_subs_paynl_card_transactions']);
         unset($GLOBALS['wsz_paynl_test_plugin_credentials']);
 
         parent::tearDown();
@@ -174,8 +240,8 @@ final class PayNLGatewayIntegrationTest extends TestCase
             $subscription
         );
 
-        $this->assertFalse($result['paid']);
-        $this->assertStringContainsString('HTTP API', $result['message']);
+        $this->assertTrue($result['paid']);
+        $this->assertNotEmpty($GLOBALS['wsz_paynl_test_http_requests']);
     }
 
     public function test_authorize_payload_uses_merchant_initiated_token_payment(): void
@@ -311,8 +377,12 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
         $order
             ->method('get_meta')
-            ->with('_wsz_subscription_ids', true)
-            ->willReturn(array(10487));
+            ->willReturnMap(
+                array(
+                    array('_wsz_subscription_ids', true, array(10487)),
+                    array('_wsz_subscription_id', true, ''),
+                )
+            );
         $order
             ->expects($this->exactly(5))
             ->method('update_meta_data')
@@ -363,6 +433,99 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('recurring_id', $order_meta['_wsz_paynl_recurring_source'] ?? '');
         $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
         $this->assertSame('no', $order_meta['_wsz_paynl_recurring_missing_logged'] ?? '');
+    }
+
+    public function test_paynl_token_exchange_logs_initial_card_transaction_for_subscription(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $order_meta = array();
+
+        $order = $this->createMock(WC_Order::class);
+        $order->method('get_id')->willReturn(10486);
+        $order->method('get_customer_id')->willReturn(5);
+        $order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $order->method('get_status')->willReturn('processing');
+        $order->method('get_total')->willReturn(39.95);
+        $order->method('get_currency')->willReturn('EUR');
+        $order
+            ->method('get_meta')
+            ->willReturnMap(
+                array(
+                    array('_wsz_subscription_ids', true, array(10487)),
+                    array('_wsz_subscription_id', true, ''),
+                )
+            );
+        $order
+            ->method('update_meta_data')
+            ->willReturnCallback(
+                static function ($key, $value) use (&$order_meta): void {
+                    $order_meta[(string) $key] = $value;
+                }
+            );
+
+        $token_id = $integration->store_recurring_payment_token(
+            $order,
+            array(
+                'action' => 'token',
+                'order_id' => 'EX-2345-2238-9812',
+                'recurring_id' => 'VY-9212-9171-2390',
+            )
+        );
+
+        $transactions = WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10);
+
+        $this->assertGreaterThan(0, $token_id);
+        $this->assertCount(1, $transactions);
+        $this->assertSame('initial', $transactions[0]['context'] ?? '');
+        $this->assertSame('PAY.nl', $transactions[0]['gateway'] ?? '');
+        $this->assertSame(10487, (int) ($transactions[0]['subscription_id'] ?? 0));
+        $this->assertSame(10486, (int) ($transactions[0]['order_id'] ?? 0));
+        $this->assertSame('EX-2345-2238-9812', $transactions[0]['transaction_id'] ?? '');
+    }
+
+    public function test_paynl_recurring_charge_logs_renewal_card_transaction_for_subscription(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_order->method('get_id')->willReturn(10488);
+        $renewal_order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $renewal_order->method('get_status')->willReturn('processing');
+        $renewal_order->method('get_total')->willReturn(12.34);
+        $renewal_order->method('get_currency')->willReturn('EUR');
+        $renewal_order
+            ->method('get_meta')
+            ->willReturnMap(
+                array(
+                    array('_wsz_subscription_id', true, 10487),
+                    array('_wsz_subscription_ids', true, ''),
+                )
+            );
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10487);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $transactions = WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10);
+
+        $this->assertTrue($result['paid']);
+        $this->assertCount(1, $transactions);
+        $this->assertSame('renewal', $transactions[0]['context'] ?? '');
+        $this->assertSame('PAY-RENEWAL-1', $transactions[0]['transaction_id'] ?? '');
+        $this->assertSame(10488, (int) ($transactions[0]['order_id'] ?? 0));
     }
 
     public function test_paynl_token_can_be_recovered_from_parent_order_meta(): void

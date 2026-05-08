@@ -12,6 +12,10 @@ class WSZ_PayNL_Gateway_Integration
 
     private const AUTHORIZE_ENDPOINT = 'https://payment.pay.nl/v1/Payment/authorize/json';
 
+    private const TRANSACTION_LOG_OPTION = 'wsz_subs_paynl_card_transactions';
+
+    private const MAX_STORED_TRANSACTIONS = 500;
+
     private ?WSZ_Subscription_Manager $subscription_manager;
 
     public function __construct(?WSZ_Subscription_Manager $subscription_manager = null)
@@ -188,7 +192,7 @@ class WSZ_PayNL_Gateway_Integration
 
         $result = $this->parse_authorize_response($decoded, $status_code);
 
-        return apply_filters(
+        $result = apply_filters(
             'wsz_subs_paynl_recurring_charge_result',
             $result,
             $decoded,
@@ -196,6 +200,90 @@ class WSZ_PayNL_Gateway_Integration
             $renewal_order,
             $subscription
         );
+
+        if (!empty($result['paid'])) {
+            self::record_transaction(
+                $renewal_order,
+                'renewal',
+                isset($result['transaction_id']) ? (string) $result['transaction_id'] : '',
+                (float) $amount,
+                (int) $subscription->get_id()
+            );
+        }
+
+        return $result;
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    public static function get_transactions(int $subscription_id = 0, int $limit = 50): array
+    {
+        $transactions = self::read_transaction_logs();
+
+        if ($subscription_id > 0) {
+            $transactions = array_values(
+                array_filter(
+                    $transactions,
+                    static function (array $entry) use ($subscription_id): bool {
+                        return (int) ($entry['subscription_id'] ?? 0) === $subscription_id;
+                    }
+                )
+            );
+        }
+
+        if ($limit > 0) {
+            $transactions = array_slice($transactions, 0, $limit);
+        }
+
+        return $transactions;
+    }
+
+    public static function record_transaction(
+        WC_Order $order,
+        string $context,
+        string $transaction_id,
+        float $amount = 0.0,
+        int $subscription_id = 0
+    ): void {
+        $recorded_timestamp = function_exists('current_time')
+            ? (int) current_time('timestamp', true)
+            : time();
+
+        $entry = array(
+            'recorded_at_local' => function_exists('wp_date')
+                ? (string) wp_date('Y-m-d H:i:s', $recorded_timestamp)
+                : date('Y-m-d H:i:s', $recorded_timestamp),
+            'recorded_at_gmt' => gmdate('Y-m-d H:i:s', $recorded_timestamp),
+            'gateway' => 'PAY.nl',
+            'context' => self::sanitize_text_value($context),
+            'subscription_id' => $subscription_id > 0 ? $subscription_id : self::resolve_subscription_id_from_order($order),
+            'order_id' => (int) $order->get_id(),
+            'status' => function_exists('sanitize_key')
+                ? sanitize_key((string) $order->get_status())
+                : preg_replace('/[^a-z0-9_\-]/i', '', (string) $order->get_status()),
+            'amount' => $amount > 0 ? $amount : (float) $order->get_total(),
+            'currency' => is_callable(array($order, 'get_currency'))
+                ? self::sanitize_text_value((string) $order->get_currency())
+                : '',
+            'transaction_id' => self::sanitize_text_value($transaction_id),
+        );
+
+        self::append_transaction_log($entry);
+
+        if (function_exists('wc_get_logger')) {
+            wc_get_logger()->info(
+                sprintf(
+                    'PAY.nl %s card transaction logged: order=%d subscription=%d tx=%s amount=%s',
+                    (string) $entry['context'],
+                    (int) $entry['order_id'],
+                    (int) $entry['subscription_id'],
+                    (string) $entry['transaction_id'],
+                    (string) $entry['amount']
+                ),
+                array('source' => 'woo-subzero-paynl')
+            );
+        }
     }
 
     /**
@@ -295,6 +383,12 @@ class WSZ_PayNL_Gateway_Integration
         WSZ_Subscription_Manager::attach_payment_token_to_order($order, $token_id);
         $order->save();
         $this->sync_token_to_order_subscriptions($order, $gateway_id, $token_id);
+        self::record_transaction(
+            $order,
+            'initial',
+            $this->resolve_initial_transaction_id($order, $payload),
+            0.0
+        );
 
         $this->log_diagnostic(
             'info',
@@ -552,6 +646,117 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         return 0;
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function resolve_initial_transaction_id(WC_Order $order, array $payload): string
+    {
+        if (is_callable(array($order, 'get_transaction_id'))) {
+            $order_transaction_id = (string) $order->get_transaction_id();
+
+            if ('' !== $order_transaction_id) {
+                return sanitize_text_field($order_transaction_id);
+            }
+        }
+
+        return $this->first_scalar(
+            $payload,
+            array(
+                'transactionId',
+                'transaction_id',
+                'transaction.id',
+                'paymentSessionId',
+                'payment_session_id',
+                'order_id',
+                'orderid',
+                'payment.id',
+                'id',
+            )
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $entry
+     */
+    private static function append_transaction_log(array $entry): void
+    {
+        $existing = self::read_transaction_logs();
+        array_unshift($existing, $entry);
+
+        if (count($existing) > self::MAX_STORED_TRANSACTIONS) {
+            $existing = array_slice($existing, 0, self::MAX_STORED_TRANSACTIONS);
+        }
+
+        self::write_transaction_logs($existing);
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private static function read_transaction_logs(): array
+    {
+        if (function_exists('get_option') && function_exists('update_option')) {
+            $stored = get_option(self::TRANSACTION_LOG_OPTION, array());
+
+            return is_array($stored) ? $stored : array();
+        }
+
+        $stored = $GLOBALS[self::TRANSACTION_LOG_OPTION] ?? array();
+
+        return is_array($stored) ? $stored : array();
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $logs
+     */
+    private static function write_transaction_logs(array $logs): void
+    {
+        if (function_exists('update_option') && function_exists('get_option')) {
+            update_option(self::TRANSACTION_LOG_OPTION, $logs, false);
+            return;
+        }
+
+        $GLOBALS[self::TRANSACTION_LOG_OPTION] = $logs;
+    }
+
+    private static function sanitize_text_value(string $value): string
+    {
+        if (function_exists('sanitize_text_field')) {
+            return sanitize_text_field($value);
+        }
+
+        return trim($value);
+    }
+
+    private static function resolve_subscription_id_from_order(WC_Order $order): int
+    {
+        $subscription_id = (int) $order->get_meta('_wsz_subscription_id', true);
+
+        if ($subscription_id <= 0 && is_callable(array($order, 'get_type'))) {
+            $type = function_exists('sanitize_key')
+                ? sanitize_key((string) $order->get_type())
+                : preg_replace('/[^a-z0-9_\-]/i', '', (string) $order->get_type());
+
+            if ('shop_subscription' === $type) {
+                $subscription_id = (int) $order->get_id();
+            }
+        }
+
+        if ($subscription_id <= 0 && is_callable(array($order, 'get_parent_id'))) {
+            $subscription_id = (int) $order->get_parent_id();
+        }
+
+        if ($subscription_id <= 0) {
+            $subscription_ids = $order->get_meta('_wsz_subscription_ids', true);
+
+            if (is_array($subscription_ids) && !empty($subscription_ids)) {
+                $subscription_id = (int) reset($subscription_ids);
+            }
+        }
+
+        return max(0, $subscription_id);
     }
 
     private function sync_token_to_order_subscriptions(WC_Order $order, string $gateway_id, int $token_id): void
