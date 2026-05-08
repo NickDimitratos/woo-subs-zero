@@ -76,6 +76,7 @@ if (!function_exists('wp_remote_retrieve_body')) {
 }
 
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
+require_once dirname(__DIR__, 2) . '/includes/admin/class-wsz-admin-settings.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-payment-token.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-gateway.php';
 
@@ -528,6 +529,46 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertTrue($result['paid']);
         $this->assertSame('PAY-ID-ALIAS-1', $result['transaction_id'] ?? '');
         $this->assertSame(array(), WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10));
+    }
+
+    public function test_paynl_recurring_charge_logs_warning_when_paid_response_has_no_transaction_id(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+        $GLOBALS['wsz_paynl_test_http_response'] = array(
+            'response' => array('code' => 200),
+            'body' => '{"state":"paid","links":{"status":"https:\/\/example.test\/status"}}',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_order->method('get_id')->willReturn(10488);
+        $renewal_order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10487);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+
+        $this->assertTrue($result['paid']);
+        $this->assertSame('', $result['transaction_id'] ?? '');
+        $this->assertSame('PAY.nl recurring charge approved without a transaction identifier.', $logs[0]['message'] ?? '');
+        $this->assertSame('10488', $logs[0]['context']['renewal_order_id'] ?? '');
+        $this->assertSame('10487', $logs[0]['context']['subscription_id'] ?? '');
+        $this->assertSame('state', $logs[0]['context']['response_keys'][0] ?? '');
+        $this->assertSame('links', $logs[0]['context']['response_keys'][1] ?? '');
     }
 
     public function test_paynl_token_can_be_recovered_from_parent_order_meta(): void
