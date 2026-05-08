@@ -1685,13 +1685,16 @@ class WSZ_Subscription_Manager
             return false;
         }
 
+        if ($this->is_one_time_transaction_meta_key($key)) {
+            return false;
+        }
+
         $copy_keys = apply_filters(
             'wsz_subs_payment_context_meta_keys',
             array(
                 '_payment_token_id',
                 '_payment_method',
                 '_payment_method_title',
-                '_transaction_id',
             ),
             $source,
             $target
@@ -1736,6 +1739,21 @@ class WSZ_Subscription_Manager
         }
 
         return false;
+    }
+
+    private function is_one_time_transaction_meta_key(string $key): bool
+    {
+        $normalized_key = strtolower(trim($key));
+
+        return in_array(
+            $normalized_key,
+            array(
+                '_transaction_id',
+                'transaction_id',
+                'transactionid',
+            ),
+            true
+        );
     }
 
     private function get_options(): array
