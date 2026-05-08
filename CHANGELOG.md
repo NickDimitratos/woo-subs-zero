@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.42] - 2026-05-08
+
+### Fixed
+
+- Preferred PAY.nl sales-location credentials (`SL-code:secret`) for recurring Card Payment authorize calls when a service secret is available.
+- Kept `AT-code:API token` authentication as a fallback for installations that do not expose a sales-location secret.
+
+### Tests
+
+- Added regression coverage for PAY.nl service-secret authorize authentication and API-token fallback behavior.
+
 ## [0.1.41] - 2026-05-08
 
 ### Fixed

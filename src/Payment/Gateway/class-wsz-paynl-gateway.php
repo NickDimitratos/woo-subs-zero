@@ -1067,11 +1067,29 @@ class WSZ_PayNL_Gateway_Integration
         $settings = $this->get_gateway_settings($gateway_id);
         $paynl_settings = $this->get_paynl_plugin_credentials();
 
+        $service_id = $this->first_setting($settings, array('service_id', 'serviceId', 'service', 'service_location_id', 'sales_location_id'));
+        $service_secret = $this->first_setting($settings, array('service_secret', 'serviceSecret', 'service_location_secret', 'sales_location_secret', 'saleslocation_secret'));
+
+        if ('' === $service_id) {
+            $service_id = $paynl_settings['service_id'] ?? '';
+        }
+
+        if ('' === $service_secret) {
+            $service_secret = $paynl_settings['service_secret'] ?? '';
+        }
+
         $credentials = array(
-            'service_id' => $this->first_setting($settings, array('service_id', 'serviceId', 'service', 'service_location_id', 'sales_location_id')),
+            'service_id' => $service_id,
             'username' => $this->first_setting($settings, array('api_username', 'username', 'at_code', 'atcode', 'token_code', 'api_token_id')),
             'password' => $this->first_setting($settings, array('api_password', 'password', 'token', 'api_token', 'apitoken', 'secret', 'api_secret')),
         );
+
+        if ('' !== $service_id && '' !== $service_secret) {
+            $credentials['username'] = $service_id;
+            $credentials['password'] = $service_secret;
+
+            return apply_filters('wsz_subs_paynl_recurring_credentials', $credentials, $renewal_order, $subscription, $settings);
+        }
 
         foreach (array('service_id', 'username', 'password') as $key) {
             if ('' === $credentials[$key] && '' !== ($paynl_settings[$key] ?? '')) {
@@ -1091,6 +1109,7 @@ class WSZ_PayNL_Gateway_Integration
             'service_id' => '',
             'username' => '',
             'password' => '',
+            'service_secret' => '',
         );
 
         if (class_exists('PPMFWC_Helper_Config')) {
@@ -1105,6 +1124,10 @@ class WSZ_PayNL_Gateway_Integration
             if (is_callable(array('PPMFWC_Helper_Config', 'getApiToken'))) {
                 $credentials['password'] = trim((string) PPMFWC_Helper_Config::getApiToken());
             }
+
+            if (is_callable(array('PPMFWC_Helper_Config', 'getServiceSecret'))) {
+                $credentials['service_secret'] = trim((string) PPMFWC_Helper_Config::getServiceSecret());
+            }
         }
 
         if ('' === $credentials['service_id']) {
@@ -1117,6 +1140,14 @@ class WSZ_PayNL_Gateway_Integration
 
         if ('' === $credentials['password']) {
             $credentials['password'] = $this->get_paynl_constant_or_option('PAYNL_API_TOKEN', 'paynl_apitoken');
+        }
+
+        if ('' === $credentials['service_secret']) {
+            $credentials['service_secret'] = $this->get_paynl_constant_or_option('PAYNL_SERVICE_SECRET', 'paynl_service_secret');
+        }
+
+        if ('' === $credentials['service_secret']) {
+            $credentials['service_secret'] = $this->get_paynl_constant_or_option('PAYNL_SECRET', 'paynl_secret');
         }
 
         return $credentials;
