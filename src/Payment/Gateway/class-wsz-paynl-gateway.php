@@ -201,16 +201,6 @@ class WSZ_PayNL_Gateway_Integration
             $subscription
         );
 
-        if (!empty($result['paid'])) {
-            self::record_transaction(
-                $renewal_order,
-                'renewal',
-                isset($result['transaction_id']) ? (string) $result['transaction_id'] : '',
-                (float) $amount,
-                (int) $subscription->get_id()
-            );
-        }
-
         return $result;
     }
 
@@ -284,6 +274,29 @@ class WSZ_PayNL_Gateway_Integration
                 array('source' => 'woo-subzero-paynl')
             );
         }
+    }
+
+    public static function record_renewal_transaction(
+        WC_Order $renewal_order,
+        WC_Order $subscription,
+        float $amount,
+        string $transaction_id
+    ): void {
+        if (!self::is_supported_gateway_id((string) $renewal_order->get_payment_method())) {
+            return;
+        }
+
+        if ('' === $transaction_id && is_callable(array($renewal_order, 'get_transaction_id'))) {
+            $transaction_id = (string) $renewal_order->get_transaction_id();
+        }
+
+        self::record_transaction(
+            $renewal_order,
+            'renewal',
+            $transaction_id,
+            $amount,
+            (int) $subscription->get_id()
+        );
     }
 
     /**
@@ -759,6 +772,39 @@ class WSZ_PayNL_Gateway_Integration
         return max(0, $subscription_id);
     }
 
+    private static function is_supported_gateway_id(string $gateway_id): bool
+    {
+        $gateway_id = function_exists('sanitize_key')
+            ? sanitize_key($gateway_id)
+            : strtolower(preg_replace('/[^a-z0-9_\-]/', '', $gateway_id));
+
+        if ('' === $gateway_id) {
+            return false;
+        }
+
+        $gateway_ids = function_exists('apply_filters')
+            ? apply_filters('wsz_subs_paynl_gateway_ids', array(self::GATEWAY_ID))
+            : array(self::GATEWAY_ID);
+
+        if (!is_array($gateway_ids)) {
+            $gateway_ids = array(self::GATEWAY_ID);
+        }
+
+        $normalized = array();
+
+        foreach ($gateway_ids as $supported_gateway_id) {
+            $supported_gateway_id = function_exists('sanitize_key')
+                ? sanitize_key((string) $supported_gateway_id)
+                : strtolower(preg_replace('/[^a-z0-9_\-]/', '', (string) $supported_gateway_id));
+
+            if ('' !== $supported_gateway_id) {
+                $normalized[] = $supported_gateway_id;
+            }
+        }
+
+        return in_array($gateway_id, array_values(array_unique($normalized)), true);
+    }
+
     private function sync_token_to_order_subscriptions(WC_Order $order, string $gateway_id, int $token_id): void
     {
         if (!($this->subscription_manager instanceof WSZ_Subscription_Manager)) {
@@ -797,8 +843,18 @@ class WSZ_PayNL_Gateway_Integration
                 'transaction.id',
                 'paymentSessionId',
                 'payment_session_id',
+                'payment.id',
+                'paymentId',
+                'payment_id',
+                'paymentSession.id',
+                'payment_session.id',
+                'transaction.paymentSessionId',
+                'transaction.payment_session_id',
+                'transaction.orderId',
+                'transaction.order_id',
                 'orderId',
                 'order_id',
+                'id',
             )
         );
         $status = strtolower(

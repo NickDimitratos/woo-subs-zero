@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.36] - 2026-05-08
+
+### Fixed
+
+- Recorded PAY.nl renewal card transactions after the renewal order completes so the subscription transaction row shows the completed order status instead of the pre-completion pending status.
+- Accepted additional PAY.nl response ID aliases, including `id` and nested payment/transaction identifiers, so renewal transaction IDs are less likely to appear blank.
+
+### Tests
+
+- Added regression coverage for post-completion PAY.nl renewal transaction logging and PAY.nl response ID alias parsing.
+
 ## [0.1.35] - 2026-05-08
 
 ### Added

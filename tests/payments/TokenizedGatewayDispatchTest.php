@@ -4,6 +4,7 @@ use PHPUnit\Framework\TestCase;
 
 require_once dirname(__DIR__, 2) . '/includes/class-wsz-subscription-manager.php';
 require_once dirname(__DIR__, 2) . '/includes/admin/class-wsz-admin-settings.php';
+require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-paynl-gateway.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/Gateway/class-wsz-tokenized-gateway.php';
 require_once dirname(__DIR__, 2) . '/src/Payment/class-wsz-payment-handler.php';
 
@@ -77,12 +78,14 @@ final class TokenizedGatewayDispatchTest extends TestCase
 
         $GLOBALS['wsz_test_filters'] = array();
         $GLOBALS['wsz_admin_test_options'] = array();
+        $GLOBALS['wsz_subs_paynl_card_transactions'] = array();
     }
 
     protected function tearDown(): void
     {
         unset($GLOBALS['wsz_test_filters']);
         unset($GLOBALS['wsz_admin_test_options']);
+        unset($GLOBALS['wsz_subs_paynl_card_transactions']);
 
         parent::tearDown();
     }
@@ -277,6 +280,64 @@ final class TokenizedGatewayDispatchTest extends TestCase
         $this->assertContains('Missing or invalid payment token for renewal.', $messages);
         $this->assertContains('Renewal status update failed after tokenized payment failure.', $messages);
     }
+
+    public function test_successful_paynl_renewal_logs_transaction_after_order_completion(): void
+    {
+        add_filter(
+            'wsz_subs_recurring_charge_callback',
+            static function () {
+                return static function (): array {
+                    return array(
+                        'paid' => true,
+                        'transaction_id' => 'PAY-RENEWAL-10497',
+                    );
+                };
+            },
+            10,
+            6
+        );
+
+        $subscription = new TokenizedGatewayDispatchPayNLOrder(10496, 'active');
+        $renewal_order = new TokenizedGatewayDispatchPayNLOrder(
+            10497,
+            'pending',
+            array('_wsz_subscription_id' => 10496)
+        );
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->method('get_subscription')
+            ->with(10496)
+            ->willReturn($subscription);
+
+        $token = new WC_Payment_Token();
+        $token->set_token('VY-9212-9171-2390');
+        $token->set_gateway_id('pay_gateway_creditcardsgrouped');
+        $token->set_user_id(5);
+        $token->save();
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(array('get_payment_token_for_subscription'))
+            ->getMock();
+        $payment_handler
+            ->method('get_payment_token_for_subscription')
+            ->with($subscription)
+            ->willReturn($token);
+
+        $gateway = new WSZ_Tokenized_Gateway($subscription_manager, $payment_handler);
+
+        $gateway->process_scheduled_payment(12.34, $renewal_order);
+
+        $transactions = WSZ_PayNL_Gateway_Integration::get_transactions(10496, 10);
+
+        $this->assertSame('processing', $renewal_order->get_status());
+        $this->assertCount(1, $transactions);
+        $this->assertSame('PAY-RENEWAL-10497', $transactions[0]['transaction_id'] ?? '');
+        $this->assertSame('processing', $transactions[0]['status'] ?? '');
+        $this->assertSame(10497, (int) ($transactions[0]['order_id'] ?? 0));
+        $this->assertSame(10496, (int) ($transactions[0]['subscription_id'] ?? 0));
+    }
 }
 
 class TokenizedGatewayDispatchDummyOrder extends WC_Order
@@ -322,9 +383,23 @@ class TokenizedGatewayDispatchDummyOrder extends WC_Order
         return in_array($this->status, array('processing', 'completed'), true);
     }
 
+    public function payment_complete($transaction_id = '')
+    {
+        if ('' !== (string) $transaction_id) {
+            $this->meta['_transaction_id'] = (string) $transaction_id;
+        }
+
+        $this->status = 'processing';
+    }
+
     public function get_meta($key, $single = true)
     {
         return $this->meta[$key] ?? '';
+    }
+
+    public function get_transaction_id()
+    {
+        return (string) ($this->meta['_transaction_id'] ?? '');
     }
 
     public function get_parent_id()
@@ -335,6 +410,11 @@ class TokenizedGatewayDispatchDummyOrder extends WC_Order
     public function get_currency()
     {
         return 'EUR';
+    }
+
+    public function get_total()
+    {
+        return 12.34;
     }
 }
 
