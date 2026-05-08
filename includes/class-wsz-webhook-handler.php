@@ -55,12 +55,7 @@ class WSZ_Webhook_Handler
         $this->mark_webhook_processed($idempotency_key);
 
         if ($verified_paid) {
-            $transaction_id = $this->extract_transaction_id($payload);
-
-            if (!$order->is_paid()) {
-                $order->payment_complete($transaction_id);
-            }
-
+            $this->apply_paid_exchange_to_order($order, $payload);
             $this->activate_order_subscriptions($order);
             $this->respond_true('paid');
         }
@@ -145,10 +140,47 @@ class WSZ_Webhook_Handler
 
     private function extract_order_id(array $payload): int
     {
-        foreach (array('order_id', 'orderid', 'order', 'reference', 'customer_reference', 'customerreference') as $key) {
-            if (isset($payload[$key]) && is_numeric($payload[$key])) {
-                return absint($payload[$key]);
+        foreach (
+            array(
+                'order_id',
+                'orderid',
+                'order',
+                'reference',
+                'customer_reference',
+                'customerreference',
+                'transaction_reference',
+                'transactionreference',
+                'stats_extra2',
+                'extra2',
+            ) as $key
+        ) {
+            if (!isset($payload[$key]) || !is_scalar($payload[$key])) {
+                continue;
             }
+
+            $order_id = $this->extract_order_id_from_reference((string) $payload[$key]);
+            if ($order_id > 0) {
+                return $order_id;
+            }
+        }
+
+        return 0;
+    }
+
+    private function extract_order_id_from_reference(string $reference): int
+    {
+        $reference = sanitize_text_field($reference);
+
+        if (is_numeric($reference)) {
+            return absint($reference);
+        }
+
+        if (preg_match('/^WSZ-R(\d+)$/i', $reference, $matches)) {
+            return absint($matches[1]);
+        }
+
+        if (preg_match('/^renewal[_-](\d+)$/i', $reference, $matches)) {
+            return absint($matches[1]);
         }
 
         return 0;
@@ -240,6 +272,53 @@ class WSZ_Webhook_Handler
     private function extract_transaction_id(array $payload): string
     {
         return WSZ_PayNL_Token_Support::extract_transaction_id($payload);
+    }
+
+    private function apply_paid_exchange_to_order(WC_Order $order, array $payload): void
+    {
+        $transaction_id = $this->extract_transaction_id($payload);
+
+        if (!$order->is_paid()) {
+            $order->payment_complete($transaction_id);
+        } elseif ('' !== $transaction_id) {
+            $this->sync_order_transaction_id($order, $transaction_id);
+        }
+
+        $this->record_paynl_renewal_exchange_transaction($order, $transaction_id);
+    }
+
+    private function sync_order_transaction_id(WC_Order $order, string $transaction_id): void
+    {
+        $current_transaction_id = is_callable(array($order, 'get_transaction_id'))
+            ? (string) $order->get_transaction_id()
+            : '';
+
+        if (hash_equals($current_transaction_id, $transaction_id)) {
+            return;
+        }
+
+        if (is_callable(array($order, 'set_transaction_id'))) {
+            $order->set_transaction_id($transaction_id);
+        } elseif (is_callable(array($order, 'update_meta_data'))) {
+            $order->update_meta_data('_transaction_id', $transaction_id);
+        }
+
+        if (is_callable(array($order, 'save'))) {
+            $order->save();
+        }
+    }
+
+    private function record_paynl_renewal_exchange_transaction(WC_Order $order, string $transaction_id): void
+    {
+        if (
+            '' === $transaction_id
+            || !class_exists('WSZ_PayNL_Gateway_Integration')
+            || !is_callable(array('WSZ_PayNL_Gateway_Integration', 'record_renewal_exchange_transaction'))
+        ) {
+            return;
+        }
+
+        WSZ_PayNL_Gateway_Integration::record_renewal_exchange_transaction($order, $transaction_id);
     }
 
     private function is_token_exchange_payload(array $payload): bool
@@ -407,6 +486,18 @@ class WSZ_Webhook_Handler
 
             $value = strtolower((string) $payload[$key]);
             if (in_array($value, array('1', 'true', 'yes', 'paid'), true)) {
+                return true;
+            }
+        }
+
+        foreach (array('status', 'status_code', 'object_status_code', 'transaction_status', 'transaction_status_code', 'payment_status') as $key) {
+            if (!isset($payload[$key]) || !is_scalar($payload[$key])) {
+                continue;
+            }
+
+            $value = strtolower(trim((string) $payload[$key]));
+
+            if ('100' === $value || in_array($value, array('paid', 'success', 'approved', 'authorized', 'authorised', 'captured'), true)) {
                 return true;
             }
         }

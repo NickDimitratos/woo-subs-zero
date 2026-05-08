@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.40] - 2026-05-08
+
+### Fixed
+
+- Resolved PAY.nl renewal exchange callbacks back to renewal orders when PAY.nl sends the plugin reference format `WSZ-R{id}`.
+- Applied PAY.nl renewal exchange transaction IDs to already-paid renewal orders and updated the existing blank renewal card transaction row.
+- Treated PAY.nl exchange status code `100` as paid during fallback exchange verification.
+
+### Tests
+
+- Added regression coverage for PAY.nl renewal exchange order resolution, exchange transaction repair, and status code `100` handling.
+
 ## [0.1.39] - 2026-05-08
 
 ### Fixed

@@ -309,6 +309,49 @@ class WSZ_PayNL_Gateway_Integration
         );
     }
 
+    public static function record_renewal_exchange_transaction(WC_Order $renewal_order, string $transaction_id): void
+    {
+        $transaction_id = self::sanitize_text_value($transaction_id);
+
+        if ('' === $transaction_id || !self::is_supported_gateway_id((string) $renewal_order->get_payment_method())) {
+            return;
+        }
+
+        $subscription_id = self::resolve_renewal_subscription_id_from_order($renewal_order);
+
+        if ($subscription_id <= 0) {
+            return;
+        }
+
+        $logs = self::read_transaction_logs();
+        $order_id = (int) $renewal_order->get_id();
+
+        foreach ($logs as $index => $entry) {
+            if (
+                'renewal' !== (string) ($entry['context'] ?? '')
+                || $order_id !== (int) ($entry['order_id'] ?? 0)
+                || $subscription_id !== (int) ($entry['subscription_id'] ?? 0)
+            ) {
+                continue;
+            }
+
+            $logs[$index]['transaction_id'] = $transaction_id;
+            $logs[$index]['status'] = function_exists('sanitize_key')
+                ? sanitize_key((string) $renewal_order->get_status())
+                : preg_replace('/[^a-z0-9_\-]/i', '', (string) $renewal_order->get_status());
+            $logs[$index]['amount'] = (float) $renewal_order->get_total();
+            $logs[$index]['currency'] = is_callable(array($renewal_order, 'get_currency'))
+                ? self::sanitize_text_value((string) $renewal_order->get_currency())
+                : '';
+
+            self::write_transaction_logs($logs);
+            self::log_renewal_exchange_transaction_updated($renewal_order, $subscription_id, $transaction_id);
+            return;
+        }
+
+        self::record_transaction($renewal_order, 'renewal', $transaction_id, 0.0, $subscription_id);
+    }
+
     /**
      * @param array<string,mixed> $payload
      */
@@ -787,6 +830,38 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         return max(0, $subscription_id);
+    }
+
+    private static function resolve_renewal_subscription_id_from_order(WC_Order $order): int
+    {
+        $subscription_id = (int) $order->get_meta('_wsz_subscription_id', true);
+
+        if ($subscription_id <= 0 && is_callable(array($order, 'get_parent_id'))) {
+            $subscription_id = (int) $order->get_parent_id();
+        }
+
+        return max(0, $subscription_id);
+    }
+
+    private static function log_renewal_exchange_transaction_updated(
+        WC_Order $renewal_order,
+        int $subscription_id,
+        string $transaction_id
+    ): void {
+        if (!function_exists('wc_get_logger')) {
+            return;
+        }
+
+        wc_get_logger()->info(
+            sprintf(
+                'PAY.nl renewal card transaction updated from exchange: order=%d subscription=%d tx=%s amount=%s',
+                (int) $renewal_order->get_id(),
+                $subscription_id,
+                $transaction_id,
+                (string) $renewal_order->get_total()
+            ),
+            array('source' => 'woo-subzero-paynl')
+        );
     }
 
     private static function is_supported_gateway_id(string $gateway_id): bool
