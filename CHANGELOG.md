@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.39] - 2026-05-08
+
+### Fixed
+
+- Added a PAY.nl diagnostic when a recurring charge is approved but the response does not expose a transaction identifier, including response keys and renewal/subscription context.
+
+### Tests
+
+- Added regression coverage for paid PAY.nl recurring responses that lack a parsed transaction ID.
+
 ## [0.1.38] - 2026-05-08
 
 ### Fixed

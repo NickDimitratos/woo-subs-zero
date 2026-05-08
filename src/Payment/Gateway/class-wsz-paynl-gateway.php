@@ -201,6 +201,20 @@ class WSZ_PayNL_Gateway_Integration
             $subscription
         );
 
+        if (!empty($result['paid']) && '' === (string) ($result['transaction_id'] ?? '')) {
+            $this->log_diagnostic(
+                'warning',
+                __('PAY.nl recurring charge approved without a transaction identifier.', 'woo-subzero'),
+                array(
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'subscription_id' => $subscription->get_id(),
+                    'status_code' => $status_code,
+                    'response_keys' => WSZ_PayNL_Token_Support::payload_keys($decoded),
+                    'body_empty' => '' === trim($body) ? 'yes' : 'no',
+                )
+            );
+        }
+
         return $result;
     }
 
