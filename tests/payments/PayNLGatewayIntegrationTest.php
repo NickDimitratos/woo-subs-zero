@@ -447,6 +447,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $order->method('get_status')->willReturn('processing');
         $order->method('get_total')->willReturn(39.95);
         $order->method('get_currency')->willReturn('EUR');
+        $order->method('get_transaction_id')->willReturn('41712240079X15d0');
         $order
             ->method('get_meta')
             ->willReturnMap(
@@ -467,7 +468,8 @@ final class PayNLGatewayIntegrationTest extends TestCase
             $order,
             array(
                 'action' => 'token',
-                'order_id' => 'EX-2345-2238-9812',
+                'order_id' => '10486',
+                'transactionid' => 'EX-2345-2238-9812',
                 'recurring_id' => 'VY-9212-9171-2390',
             )
         );

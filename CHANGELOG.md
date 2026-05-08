@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.38] - 2026-05-08
+
+### Fixed
+
+- Preferred PAY.nl token-exchange callback identifiers such as `transactionid` over the WooCommerce order transaction ID when logging the initial card transaction row.
+
+### Tests
+
+- Added regression coverage for PAY.nl token-exchange transaction IDs when WooCommerce already has a different order transaction ID.
+
 ## [0.1.37] - 2026-05-08
 
 ### Fixed
