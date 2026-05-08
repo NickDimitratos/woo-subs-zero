@@ -127,6 +127,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
         $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
         $GLOBALS['wsz_admin_test_options']['wsz_subs_paynl_card_transactions'] = array();
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] = array();
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array();
 
         if (is_callable(array('WC_Payment_Tokens', 'reset_test_tokens'))) {
@@ -145,6 +146,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         unset($GLOBALS['wsz_subs_test_options']);
         unset($GLOBALS['wsz_admin_test_options']['wsz_subs_options']);
         unset($GLOBALS['wsz_admin_test_options']['wsz_subs_paynl_card_transactions']);
+        unset($GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs']);
         unset($GLOBALS['wsz_paynl_test_plugin_credentials']);
 
         parent::tearDown();
@@ -531,6 +533,83 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame(array(), WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10));
     }
 
+    public function test_paynl_recurring_charge_reads_documented_transaction_response(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+        $GLOBALS['wsz_paynl_test_http_response'] = array(
+            'response' => array('code' => 200),
+            'body' => '{"request":{"result":1,"errorId":"","errorMessage":""},"payment":{"bankCode":"00","bankMessage":"Approved"},"transaction":{"transactionId":"EX-6582-4371-5560","orderId":"1606895211Xcfe87","state":"100","stateName":"PAID"}}',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_order->method('get_id')->willReturn(10488);
+        $renewal_order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+        $renewal_order
+            ->method('get_meta')
+            ->willReturnMap(
+                array(
+                    array('_wsz_subscription_id', true, 10487),
+                    array('_wsz_subscription_ids', true, ''),
+                )
+            );
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10487);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $this->assertTrue($result['paid']);
+        $this->assertSame('EX-6582-4371-5560', $result['transaction_id'] ?? '');
+    }
+
+    public function test_paynl_recurring_charge_treats_request_result_zero_as_declined(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+        $GLOBALS['wsz_paynl_test_http_response'] = array(
+            'response' => array('code' => 200),
+            'body' => '{"request":{"result":0,"errorId":"PAY-2011","errorTag":"invalidRequest","errorMessage":"Invalid card token."}}',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_order->method('get_id')->willReturn(10488);
+        $renewal_order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10487);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+
+        $this->assertFalse($result['paid']);
+        $this->assertSame('Invalid card token.', $result['message'] ?? '');
+        $this->assertSame(array(), $logs);
+    }
+
     public function test_paynl_recurring_charge_logs_warning_when_paid_response_has_no_transaction_id(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
@@ -569,6 +648,43 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('10487', $logs[0]['context']['subscription_id'] ?? '');
         $this->assertSame('state', $logs[0]['context']['response_keys'][0] ?? '');
         $this->assertSame('links', $logs[0]['context']['response_keys'][1] ?? '');
+    }
+
+    public function test_paynl_recurring_charge_empty_transaction_warning_includes_request_context(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+        $GLOBALS['wsz_paynl_test_http_response'] = array(
+            'response' => array('code' => 200),
+            'body' => '{"request":{"result":1,"errorId":"","errorMessage":""}}',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $renewal_order = $this->createMock(WC_Order::class);
+        $renewal_order->method('get_id')->willReturn(10488);
+        $renewal_order->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(10487);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
+
+        $this->assertTrue($result['paid']);
+        $this->assertSame('', $result['transaction_id'] ?? '');
+        $this->assertSame('1', $logs[0]['context']['request_result'] ?? '');
+        $this->assertSame('request', $logs[0]['context']['response_keys'][0] ?? '');
     }
 
     public function test_paynl_token_can_be_recovered_from_parent_order_meta(): void

@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.41] - 2026-05-08
+
+### Fixed
+
+- Parsed PAY.nl Card Payment authorize responses using the documented `transaction.transactionId` field before falling back to order/session identifiers.
+- Treated PAY.nl authorize responses with `request.result=0` as failed instead of paid, preserving the PAY.nl error message.
+- Included PAY.nl `request`, `transaction`, and `payment` diagnostic fields on empty-transaction warnings when available.
+
+### Tests
+
+- Added regression coverage for documented PAY.nl authorize responses, `request.result=0` failures, and request-only diagnostic context.
+
 ## [0.1.40] - 2026-05-08
 
 ### Fixed
