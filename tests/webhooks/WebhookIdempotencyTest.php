@@ -188,4 +188,160 @@ final class WebhookIdempotencyTest extends TestCase
         $this->assertNotEmpty($order_meta['_wsz_paynl_recurring_captured_at'] ?? '');
         $this->assertSame('no', $order_meta['_wsz_paynl_recurring_missing_logged'] ?? '');
     }
+
+    public function test_paynl_renewal_exchange_resolves_order_from_wsz_reference(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Webhook_Handler($subscription_manager);
+        $order = new WebhookPayNLRenewalOrder(10682, array('_wsz_subscription_id' => 10681));
+
+        $GLOBALS['wsz_subs_test_orders'][10682] = $order;
+
+        $method = new ReflectionMethod(WSZ_Webhook_Handler::class, 'resolve_order_from_payload');
+        $method->setAccessible(true);
+
+        $this->assertSame(
+            $order,
+            $method->invoke(
+                $handler,
+                array(
+                    'reference' => 'WSZ-R10682',
+                    'transactionid' => 'EX-8157-0581-4222',
+                    'state' => 'paid',
+                )
+            )
+        );
+    }
+
+    public function test_paynl_renewal_exchange_applies_transaction_id_to_already_paid_order(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Webhook_Handler($subscription_manager);
+        $order = new WebhookPayNLRenewalOrder(
+            10682,
+            array('_wsz_subscription_id' => 10681),
+            true,
+            ''
+        );
+
+        $GLOBALS['wsz_subs_paynl_card_transactions'] = array(
+            array(
+                'context' => 'renewal',
+                'subscription_id' => 10681,
+                'order_id' => 10682,
+                'status' => 'processing',
+                'amount' => 0.05,
+                'currency' => 'EUR',
+                'transaction_id' => '',
+            ),
+        );
+
+        $method = new ReflectionMethod(WSZ_Webhook_Handler::class, 'apply_paid_exchange_to_order');
+        $method->setAccessible(true);
+
+        $method->invoke(
+            $handler,
+            $order,
+            array(
+                'reference' => 'WSZ-R10682',
+                'transactionid' => 'EX-8157-0581-4222',
+                'state' => 'paid',
+            )
+        );
+
+        $transactions = WSZ_PayNL_Gateway_Integration::get_transactions(10681, 10);
+
+        $this->assertSame('EX-8157-0581-4222', $order->get_transaction_id());
+        $this->assertSame(1, $order->save_count);
+        $this->assertCount(1, $transactions);
+        $this->assertSame('EX-8157-0581-4222', $transactions[0]['transaction_id'] ?? '');
+        $this->assertSame(10682, (int) ($transactions[0]['order_id'] ?? 0));
+    }
+
+    public function test_paynl_exchange_status_code_100_is_paid(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Webhook_Handler($subscription_manager);
+
+        $method = new ReflectionMethod(WSZ_Webhook_Handler::class, 'fallback_paid_check');
+        $method->setAccessible(true);
+
+        $this->assertTrue($method->invoke($handler, array('status' => '100')));
+    }
+}
+
+final class WebhookPayNLRenewalOrder extends WC_Order
+{
+    public int $save_count = 0;
+
+    /**
+     * @param array<string,mixed> $meta
+     */
+    public function __construct(
+        private int $id,
+        private array $meta = array(),
+        private bool $paid = false,
+        private string $transaction_id = ''
+    ) {
+    }
+
+    public function get_id()
+    {
+        return $this->id;
+    }
+
+    public function get_meta($key, $single = true)
+    {
+        return $this->meta[(string) $key] ?? '';
+    }
+
+    public function get_payment_method()
+    {
+        return WSZ_PayNL_Gateway_Integration::GATEWAY_ID;
+    }
+
+    public function is_paid()
+    {
+        return $this->paid;
+    }
+
+    public function payment_complete($transaction_id = '')
+    {
+        $this->paid = true;
+        $this->transaction_id = (string) $transaction_id;
+    }
+
+    public function get_transaction_id()
+    {
+        return $this->transaction_id;
+    }
+
+    public function update_meta_data($key, $value)
+    {
+        $this->meta[(string) $key] = $value;
+
+        if ('_transaction_id' === $key) {
+            $this->transaction_id = (string) $value;
+        }
+    }
+
+    public function save()
+    {
+        ++$this->save_count;
+    }
+
+    public function get_status()
+    {
+        return 'processing';
+    }
+
+    public function get_total()
+    {
+        return 0.05;
+    }
+
+    public function get_currency()
+    {
+        return 'EUR';
+    }
 }
