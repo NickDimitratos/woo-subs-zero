@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.43] - 2026-05-09
+
+### Added
+
+- Added an opt-in Stripe tokenized renewal integration for saved Stripe payment methods.
+- Added a Stripe toggle to the WSZ Payment Gateways settings tab.
+
+### Tests
+
+- Added Stripe renewal coverage for PaymentIntent payloads, idempotency, zero-decimal currencies, SCA-required failures, and missing customer context.
+
 ## [0.1.42] - 2026-05-08
 
 ### Fixed

@@ -79,6 +79,7 @@ final class WSZ_Woo_Subzero
                     'enable_test_deferred_start' => 'yes',
                     'test_deferred_start_minutes' => 1,
                     'enable_test_cycle_notifications' => 'no',
+                    'enable_stripe_tokens' => 'no',
                     'enable_role_transitions' => 'no',
                     'active_user_role' => 'customer',
                     'inactive_user_role' => '',
@@ -193,6 +194,7 @@ final class WSZ_Woo_Subzero
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/admin/class-wsz-admin-subscriptions.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/Gateway/class-wsz-paynl-payment-token.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/Gateway/class-wsz-paynl-gateway.php';
+        require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/Gateway/class-wsz-stripe-gateway.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/class-wsz-payment-handler.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/Gateway/class-wsz-test-card-gateway.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'src/Payment/Gateway/class-wsz-tokenized-gateway.php';
