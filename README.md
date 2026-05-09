@@ -66,6 +66,23 @@ Read more: [Installation](docs/sections/installation.md)
 4. Place a checkout order with a subscription item.
 5. Verify activation and queued renewals in subscription admin screens.
 
+## Payment Gateway Compatibility
+
+Woo Subs-Zero can store WooCommerce payment context, but automatic renewals are safest only with gateways that provide a reusable token and a tested server-side recurring charge path.
+
+| Gateway | Compatibility | Notes |
+| --- | --- | --- |
+| WSZ Test Card | Recommended for QA/staging | Built into this plugin. Use it to validate subscription lifecycle, renewal scheduling, retries, and transaction logging without charging real cards. |
+| PAY.nl Credit/Debitcards (`pay_gateway_creditcardsgrouped`) | Recommended for production after PAY.nl setup | Requires PAY.nl Card-not-present credit cards, Tokenization, Create token on transaction, recurring/MIT permission, and Sales Location credentials (`SL-code:secret`). New subscriptions should be created after the correct PAY.nl Sales Location is configured so the stored `recurring_id` belongs to that Sales Location. |
+| Manual/offline gateways | Supported as manual renewals | Safe for order/subscription tracking, but renewals require manual payment collection. They should not be treated as automatic card renewals. |
+| Stripe (`stripe`) | Supported after Stripe setup | Enable Stripe tokens in WSZ Payment Gateways. Renewals use the saved Stripe customer and payment method to create confirmed off-session PaymentIntents with idempotency. |
+| Mollie Credit Card (`mollie_wc_gateway_creditcard`) | Supported after Mollie recurring setup | Enable Mollie tokens in WSZ Payment Gateways. Renewals use the saved Mollie customer and mandate context to create customer payments with `sequenceType=recurring`. |
+| PayPal Payments | Not certified for automatic WSZ renewals yet | PayPal automatic renewals require either PayPal Subscriptions or Vaulting/Reference Transactions. Those are gateway-specific flows. WSZ does not currently include a PayPal vault/reference-transaction adapter. |
+| Adyen | Not certified for automatic WSZ renewals yet | Adyen supports tokenized subscription payments, but requires stored payment method IDs, shopper references, recurring processing model, credential roles, and webhooks. WSZ does not currently include an Adyen-specific adapter. |
+| Other tokenized gateways | Requires custom validation | Gateways can be registered through the `wsz_subs_tokenized_gateway_ids` filter, but each gateway needs a tested recurring-charge implementation and webhook/transaction-ID behavior before production use. |
+
+For production automatic card renewals, validate a full cycle in staging: initial checkout, token exchange, renewal charge, exchange webhook, WooCommerce renewal order transaction ID, and the subscription Card Transactions row.
+
 ## Usage Guide
 
 Covers product setup, finite-term behavior, renewal/retry flow, webhook verification contract, and built-in QA tooling.
