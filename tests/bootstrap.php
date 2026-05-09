@@ -164,6 +164,55 @@ if (!function_exists('wp_parse_args')) {
     }
 }
 
+if (!function_exists('wp_remote_post')) {
+    function wp_remote_post($url, $args = array())
+    {
+        $request = array(
+            'url' => (string) $url,
+            'args' => $args,
+        );
+
+        $GLOBALS['wsz_test_http_requests'][] = $request;
+
+        if (false !== strpos((string) $url, 'payment.pay.nl')) {
+            $GLOBALS['wsz_paynl_test_http_requests'][] = $request;
+
+            return $GLOBALS['wsz_paynl_test_http_response'] ?? array(
+                'response' => array('code' => 200),
+                'body' => '{"state":"paid","transactionId":"PAY-RENEWAL-1"}',
+            );
+        }
+
+        if (false !== strpos((string) $url, 'api.mollie.com')) {
+            $GLOBALS['wsz_mollie_test_http_requests'][] = $request;
+
+            return $GLOBALS['wsz_mollie_test_http_response'] ?? array(
+                'response' => array('code' => 201),
+                'body' => '{"id":"tr_wsz_test","status":"paid","mandateId":"mdt_wsz_test"}',
+            );
+        }
+
+        return $GLOBALS['wsz_test_http_response'] ?? array(
+            'response' => array('code' => 200),
+            'body' => '{}',
+        );
+    }
+}
+
+if (!function_exists('wp_remote_retrieve_response_code')) {
+    function wp_remote_retrieve_response_code($response)
+    {
+        return (int) ($response['response']['code'] ?? 0);
+    }
+}
+
+if (!function_exists('wp_remote_retrieve_body')) {
+    function wp_remote_retrieve_body($response)
+    {
+        return (string) ($response['body'] ?? '');
+    }
+}
+
 if (!function_exists('wc_format_decimal')) {
     function wc_format_decimal($number, $dp = 2)
     {
