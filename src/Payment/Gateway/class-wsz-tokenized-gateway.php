@@ -156,6 +156,34 @@ class WSZ_Tokenized_Gateway
             return;
         }
 
+        if (!empty($charge_result['pending'])) {
+            $message = !empty($charge_result['message'])
+                ? sanitize_text_field((string) $charge_result['message'])
+                : __('Recurring charge is pending provider confirmation.', 'woo-subzero');
+            $transaction_id = isset($charge_result['transaction_id']) ? sanitize_text_field((string) $charge_result['transaction_id']) : '';
+
+            if ('' !== $transaction_id && is_callable(array($renewal_order, 'update_meta_data'))) {
+                $renewal_order->update_meta_data('_transaction_id', $transaction_id);
+            }
+
+            if (!$renewal_order->has_status(array('pending', 'on-hold'))) {
+                $renewal_order->update_status('pending', $message);
+            }
+
+            $this->log_diagnostic(
+                'notice',
+                $message,
+                array(
+                    'subscription_id' => $subscription->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'payment_token_id' => $token->get_id(),
+                    'transaction_id' => $transaction_id,
+                )
+            );
+
+            return;
+        }
+
         $message = !empty($charge_result['message'])
             ? sanitize_text_field((string) $charge_result['message'])
             : __('Recurring charge failed.', 'woo-subzero');

@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.43] - 2026-05-09
+
+### Added
+
+- Added an opt-in Mollie tokenized renewal integration for saved Mollie customer mandate context.
+- Added a Mollie toggle to the WSZ Payment Gateways settings tab.
+
+### Fixed
+
+- Kept provider-pending recurring charges as pending renewal orders instead of marking them failed immediately.
+
+### Tests
+
+- Added Mollie renewal coverage for customer payment payloads, idempotency, pending statuses, and missing customer context.
+
 ## [0.1.42] - 2026-05-08
 
 ### Fixed
