@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Added an opt-in Stripe tokenized renewal integration for saved Stripe payment methods.
+- Added a Stripe toggle to the WSZ Payment Gateways settings tab.
 - Added an opt-in Mollie tokenized renewal integration for saved Mollie customer mandate context.
 - Added a Mollie toggle to the WSZ Payment Gateways settings tab.
 
@@ -15,6 +17,7 @@ All notable changes to this project are documented in this file.
 
 ### Tests
 
+- Added Stripe renewal coverage for PaymentIntent payloads, idempotency, zero-decimal currencies, SCA-required failures, and missing customer context.
 - Added Mollie renewal coverage for customer payment payloads, idempotency, pending statuses, and missing customer context.
 
 ## [0.1.42] - 2026-05-08

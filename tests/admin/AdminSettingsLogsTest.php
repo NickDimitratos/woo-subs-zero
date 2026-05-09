@@ -388,21 +388,26 @@ final class AdminSettingsLogsTest extends TestCase
         $enabled = $settings->sanitize_settings(
             array(
                 'enable_paynl_tokens' => 'yes',
+                'enable_stripe_tokens' => 'yes',
                 'enable_mollie_tokens' => 'yes',
             )
         );
         $invalid = $settings->sanitize_settings(
             array(
                 'enable_paynl_tokens' => 'unexpected',
+                'enable_stripe_tokens' => 'unexpected',
                 'enable_mollie_tokens' => 'unexpected',
             )
         );
 
         $this->assertSame('no', $defaulted['enable_paynl_tokens'] ?? null);
+        $this->assertSame('no', $defaulted['enable_stripe_tokens'] ?? null);
         $this->assertSame('no', $defaulted['enable_mollie_tokens'] ?? null);
         $this->assertSame('yes', $enabled['enable_paynl_tokens'] ?? null);
+        $this->assertSame('yes', $enabled['enable_stripe_tokens'] ?? null);
         $this->assertSame('yes', $enabled['enable_mollie_tokens'] ?? null);
         $this->assertSame('no', $invalid['enable_paynl_tokens'] ?? null);
+        $this->assertSame('no', $invalid['enable_stripe_tokens'] ?? null);
         $this->assertSame('no', $invalid['enable_mollie_tokens'] ?? null);
     }
 
@@ -414,6 +419,7 @@ final class AdminSettingsLogsTest extends TestCase
             'enable_test_cycle_notifications' => 'yes',
             'test_cycle_minutes' => 7,
             'enable_paynl_tokens' => 'no',
+            'enable_stripe_tokens' => 'no',
             'enable_mollie_tokens' => 'no',
         );
 
@@ -421,11 +427,13 @@ final class AdminSettingsLogsTest extends TestCase
         $sanitized = $settings->sanitize_settings(
             array(
                 'enable_paynl_tokens' => 'yes',
+                'enable_stripe_tokens' => 'yes',
                 'enable_mollie_tokens' => 'yes',
             )
         );
 
         $this->assertSame('yes', $sanitized['enable_paynl_tokens'] ?? null);
+        $this->assertSame('yes', $sanitized['enable_stripe_tokens'] ?? null);
         $this->assertSame('yes', $sanitized['enable_mollie_tokens'] ?? null);
         $this->assertSame('yes', $sanitized['enable_test_mode'] ?? null);
         $this->assertSame('yes', $sanitized['enable_test_deferred_start'] ?? null);
@@ -440,6 +448,7 @@ final class AdminSettingsLogsTest extends TestCase
             'enable_test_deferred_start' => 'yes',
             'enable_test_cycle_notifications' => 'yes',
             'enable_paynl_tokens' => 'yes',
+            'enable_stripe_tokens' => 'yes',
             'enable_mollie_tokens' => 'yes',
         );
 
@@ -454,6 +463,7 @@ final class AdminSettingsLogsTest extends TestCase
         );
 
         $this->assertSame('yes', $sanitized['enable_paynl_tokens'] ?? null);
+        $this->assertSame('yes', $sanitized['enable_stripe_tokens'] ?? null);
         $this->assertSame('yes', $sanitized['enable_mollie_tokens'] ?? null);
         $this->assertSame('no', $sanitized['enable_test_mode'] ?? null);
         $this->assertSame('no', $sanitized['enable_test_deferred_start'] ?? null);
@@ -470,6 +480,7 @@ final class AdminSettingsLogsTest extends TestCase
 
         $GLOBALS['wsz_subs_test_options'] = array(
             'enable_paynl_tokens' => 'yes',
+            'enable_stripe_tokens' => 'yes',
             'enable_mollie_tokens' => 'yes',
         );
 
@@ -484,10 +495,13 @@ final class AdminSettingsLogsTest extends TestCase
 
         $this->assertStringContainsString('Payment Gateways', $output);
         $this->assertStringContainsString('Enable PAY.nl tokens', $output);
+        $this->assertStringContainsString('Enable Stripe tokens', $output);
         $this->assertStringContainsString('Enable Mollie tokens', $output);
         $this->assertStringContainsString('enable_paynl_tokens', $output);
+        $this->assertStringContainsString('enable_stripe_tokens', $output);
         $this->assertStringContainsString('enable_mollie_tokens', $output);
         $this->assertStringContainsString('type="hidden" name="wsz_subs_options[enable_paynl_tokens]" value="no"', $output);
+        $this->assertStringContainsString('type="hidden" name="wsz_subs_options[enable_stripe_tokens]" value="no"', $output);
         $this->assertStringContainsString('type="hidden" name="wsz_subs_options[enable_mollie_tokens]" value="no"', $output);
         $this->assertStringContainsString('checked="checked"', $output);
     }

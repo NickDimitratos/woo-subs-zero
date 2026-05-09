@@ -10,6 +10,8 @@ class WSZ_Payment_Handler
 
     private ?WSZ_PayNL_Gateway_Integration $paynl_gateway = null;
 
+    private ?WSZ_Stripe_Gateway_Integration $stripe_gateway = null;
+
     private ?WSZ_Mollie_Gateway_Integration $mollie_gateway = null;
 
     private ?WSZ_Tokenized_Gateway $tokenized_gateway = null;
@@ -26,6 +28,9 @@ class WSZ_Payment_Handler
 
         $this->paynl_gateway = new WSZ_PayNL_Gateway_Integration($this->subscription_manager);
         $this->paynl_gateway->init();
+
+        $this->stripe_gateway = new WSZ_Stripe_Gateway_Integration();
+        $this->stripe_gateway->init();
 
         $this->mollie_gateway = new WSZ_Mollie_Gateway_Integration();
         $this->mollie_gateway->init();

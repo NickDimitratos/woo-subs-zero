@@ -236,6 +236,18 @@ class WSZ_Admin_Settings
         );
 
         add_settings_field(
+            'enable_stripe_tokens',
+            __('Enable Stripe tokens', 'woo-subzero'),
+            array($this, 'render_checkbox_field'),
+            self::SETTINGS_PAGE,
+            'wsz_subs_payment_gateways',
+            array(
+                'key' => 'enable_stripe_tokens',
+                'description' => $this->get_field_description('enable_stripe_tokens'),
+            )
+        );
+
+        add_settings_field(
             'enable_mollie_tokens',
             __('Enable Mollie tokens', 'woo-subzero'),
             array($this, 'render_checkbox_field'),
@@ -352,6 +364,7 @@ class WSZ_Admin_Settings
             'enable_test_deferred_start' => $this->sanitize_yes_no($settings['enable_test_deferred_start']),
             'enable_test_cycle_notifications' => $this->sanitize_yes_no($settings['enable_test_cycle_notifications']),
             'enable_paynl_tokens' => $this->sanitize_yes_no($settings['enable_paynl_tokens']),
+            'enable_stripe_tokens' => $this->sanitize_yes_no($settings['enable_stripe_tokens']),
             'enable_mollie_tokens' => $this->sanitize_yes_no($settings['enable_mollie_tokens']),
             'customer_suspension_limit' => min(30, max(0, (int) $settings['customer_suspension_limit'])),
             'free_switch_window_days' => min(60, max(0, (int) $settings['free_switch_window_days'])),
@@ -524,6 +537,7 @@ class WSZ_Admin_Settings
             'enable_test_deferred_start' => __('When test mode is enabled, future customer-selected start dates are accelerated to a short minute-based delay.', 'woo-subzero'),
             'enable_test_cycle_notifications' => __('Adds a subscription note and fires a hook each accelerated cycle for easier QA verification.', 'woo-subzero'),
             'enable_paynl_tokens' => __('Captures PAY.nl tokenization callbacks and uses stored PAY.nl recurring IDs for automatic subscription renewals. Leave disabled unless PAY.nl recurring card payments are configured.', 'woo-subzero'),
+            'enable_stripe_tokens' => __('Uses saved Stripe payment methods and customer IDs from the Stripe gateway for automatic off-session subscription renewals. Leave disabled unless Stripe tokenized payments are configured.', 'woo-subzero'),
             'enable_mollie_tokens' => __('Uses saved Mollie customer and mandate context for automatic recurring subscription renewals. Leave disabled unless Mollie recurring payments are configured.', 'woo-subzero'),
             'customer_suspension_limit' => __('Maximum number of customer-initiated suspensions allowed per subscription.', 'woo-subzero'),
             'enable_proration' => __('Turns on proration logic for subscription plan switches.', 'woo-subzero'),
@@ -1049,6 +1063,7 @@ class WSZ_Admin_Settings
             'test_deferred_start_minutes' => 1,
             'enable_test_cycle_notifications' => 'no',
             'enable_paynl_tokens' => 'no',
+            'enable_stripe_tokens' => 'no',
             'enable_mollie_tokens' => 'no',
             'enable_role_transitions' => 'no',
             'active_user_role' => 'customer',

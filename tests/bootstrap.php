@@ -174,6 +174,15 @@ if (!function_exists('wp_remote_post')) {
 
         $GLOBALS['wsz_test_http_requests'][] = $request;
 
+        if (false !== strpos((string) $url, 'api.stripe.com')) {
+            $GLOBALS['wsz_stripe_test_http_requests'][] = $request;
+
+            return $GLOBALS['wsz_stripe_test_http_response'] ?? array(
+                'response' => array('code' => 200),
+                'body' => '{"id":"pi_wsz_test","status":"succeeded"}',
+            );
+        }
+
         if (false !== strpos((string) $url, 'payment.pay.nl')) {
             $GLOBALS['wsz_paynl_test_http_requests'][] = $request;
 
