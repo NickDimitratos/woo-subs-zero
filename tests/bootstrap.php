@@ -192,6 +192,15 @@ if (!function_exists('wp_remote_post')) {
             );
         }
 
+        if (false !== strpos((string) $url, 'api.mollie.com')) {
+            $GLOBALS['wsz_mollie_test_http_requests'][] = $request;
+
+            return $GLOBALS['wsz_mollie_test_http_response'] ?? array(
+                'response' => array('code' => 201),
+                'body' => '{"id":"tr_wsz_test","status":"paid","mandateId":"mdt_wsz_test"}',
+            );
+        }
+
         return $GLOBALS['wsz_test_http_response'] ?? array(
             'response' => array('code' => 200),
             'body' => '{}',

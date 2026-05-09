@@ -338,6 +338,59 @@ final class TokenizedGatewayDispatchTest extends TestCase
         $this->assertSame(10497, (int) ($transactions[0]['order_id'] ?? 0));
         $this->assertSame(10496, (int) ($transactions[0]['subscription_id'] ?? 0));
     }
+
+    public function test_pending_recurring_charge_keeps_renewal_order_pending(): void
+    {
+        add_filter(
+            'wsz_subs_recurring_charge_callback',
+            static function () {
+                return static function (): array {
+                    return array(
+                        'paid' => false,
+                        'pending' => true,
+                        'transaction_id' => 'tr_pending_10497',
+                        'message' => 'Mollie recurring payment is pending.',
+                    );
+                };
+            },
+            10,
+            6
+        );
+
+        $subscription = new TokenizedGatewayDispatchDummyOrder(10496, 'active');
+        $renewal_order = new TokenizedGatewayDispatchDummyOrder(
+            10497,
+            'pending',
+            array('_wsz_subscription_id' => 10496)
+        );
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->method('get_subscription')
+            ->with(10496)
+            ->willReturn($subscription);
+
+        $token = new WC_Payment_Token();
+        $token->set_token('mdt_wsz_123');
+        $token->set_gateway_id('mollie_wc_gateway_creditcard');
+        $token->set_user_id(5);
+        $token->save();
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(array('get_payment_token_for_subscription'))
+            ->getMock();
+        $payment_handler
+            ->method('get_payment_token_for_subscription')
+            ->with($subscription)
+            ->willReturn($token);
+
+        $gateway = new WSZ_Tokenized_Gateway($subscription_manager, $payment_handler);
+
+        $gateway->process_scheduled_payment(12.34, $renewal_order);
+
+        $this->assertSame('pending', $renewal_order->get_status());
+    }
 }
 
 class TokenizedGatewayDispatchDummyOrder extends WC_Order
