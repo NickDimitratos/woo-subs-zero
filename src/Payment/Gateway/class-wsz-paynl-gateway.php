@@ -10,7 +10,7 @@ class WSZ_PayNL_Gateway_Integration
 {
     public const GATEWAY_ID = 'pay_gateway_creditcardsgrouped';
 
-    private const AUTHORIZE_ENDPOINT = 'https://payment.pay.nl/v1/Payment/authorize/json';
+    private const AUTHORIZE_ENDPOINT = 'https://rest-api.pay.nl/v18/transaction/byRecurringId/json';
 
     private const TRANSACTION_LOG_OPTION = 'wsz_subs_paynl_card_transactions';
 
@@ -166,10 +166,9 @@ class WSZ_PayNL_Gateway_Integration
                 'timeout' => 45,
                 'headers' => array(
                     'Authorization' => 'Basic ' . base64_encode((string) $credentials['username'] . ':' . (string) $credentials['password']),
-                    'Content-Type' => 'application/json',
                     'Accept' => 'application/json',
                 ),
-                'body' => function_exists('wp_json_encode') ? wp_json_encode($payload) : json_encode($payload),
+                'body' => $payload,
             )
         );
 
@@ -200,6 +199,23 @@ class WSZ_PayNL_Gateway_Integration
             $renewal_order,
             $subscription
         );
+
+        if (empty($result['paid'])) {
+            $this->log_diagnostic(
+                'warning',
+                __('PAY.nl recurring charge was not approved.', 'woo-subzero'),
+                array_merge(
+                    array(
+                        'renewal_order_id' => $renewal_order->get_id(),
+                        'subscription_id' => $subscription->get_id(),
+                        'status_code' => $status_code,
+                        'response_keys' => WSZ_PayNL_Token_Support::payload_keys($decoded),
+                        'body_empty' => '' === trim($body) ? 'yes' : 'no',
+                    ),
+                    $this->authorize_response_diagnostic_context($decoded)
+                )
+            );
+        }
 
         if (!empty($result['paid']) && '' === (string) ($result['transaction_id'] ?? '')) {
             $this->log_diagnostic(
@@ -516,27 +532,15 @@ class WSZ_PayNL_Gateway_Integration
         $reference = 'WSZ-R' . $renewal_order->get_id();
 
         return array(
-            'transaction' => array(
-                'type' => 'mit',
-                'serviceId' => $service_id,
-                'description' => sprintf('Renewal order %d', $renewal_order->get_id()),
-                'reference' => $reference,
-                'amount' => max(0, (int) round($amount * 100)),
-                'currency' => strtoupper($currency ?: get_woocommerce_currency()),
-                'exchangeUrl' => $this->get_exchange_url(),
-            ),
-            'payment' => array(
-                'method' => 'token',
-                'token' => array(
-                    'id' => $recurring_id,
-                ),
-            ),
-            'options' => array(
-                'tokenization' => 1,
-            ),
-            'stats' => array(
+            'serviceId' => $service_id,
+            'recurringId' => $recurring_id,
+            'amount' => max(0, (int) round($amount * 100)),
+            'currency' => strtoupper($currency ?: get_woocommerce_currency()),
+            'description' => sprintf('Renewal order %d', $renewal_order->get_id()),
+            'statsData' => array(
                 'extra1' => 'subscription_' . $subscription->get_id(),
                 'extra2' => 'renewal_' . $renewal_order->get_id(),
+                'extra3' => $reference,
                 'object' => 'Woo Subs-Zero ' . (defined('WSZ_WOO_SUBZERO_VERSION') ? WSZ_WOO_SUBZERO_VERSION : ''),
             ),
         );
@@ -1084,17 +1088,15 @@ class WSZ_PayNL_Gateway_Integration
             'password' => $this->first_setting($settings, array('api_password', 'password', 'token', 'api_token', 'apitoken', 'secret', 'api_secret')),
         );
 
-        if ('' !== $service_id && '' !== $service_secret) {
-            $credentials['username'] = $service_id;
-            $credentials['password'] = $service_secret;
-
-            return apply_filters('wsz_subs_paynl_recurring_credentials', $credentials, $renewal_order, $subscription, $settings);
-        }
-
         foreach (array('service_id', 'username', 'password') as $key) {
             if ('' === $credentials[$key] && '' !== ($paynl_settings[$key] ?? '')) {
                 $credentials[$key] = $paynl_settings[$key];
             }
+        }
+
+        if ('' === $credentials['username'] && '' !== $service_id && '' !== $service_secret) {
+            $credentials['username'] = $service_id;
+            $credentials['password'] = $service_secret;
         }
 
         return apply_filters('wsz_subs_paynl_recurring_credentials', $credentials, $renewal_order, $subscription, $settings);

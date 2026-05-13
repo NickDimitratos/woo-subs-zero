@@ -183,7 +183,7 @@ if (!function_exists('wp_remote_post')) {
             );
         }
 
-        if (false !== strpos((string) $url, 'payment.pay.nl')) {
+        if (false !== strpos((string) $url, 'payment.pay.nl') || false !== strpos((string) $url, 'rest-api.pay.nl')) {
             $GLOBALS['wsz_paynl_test_http_requests'][] = $request;
 
             return $GLOBALS['wsz_paynl_test_http_response'] ?? array(

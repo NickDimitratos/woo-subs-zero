@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.44] - 2026-05-13
+
+### Added
+
+- Added a guarded PAY.nl recurring curl test script for validating tokenized renewal requests against PAY.nl without committing credentials.
+
+### Fixed
+
+- Switched PAY.nl automatic renewals to the `transaction/byRecurringId` endpoint using stored `recurring_id` values and `AT-code:API token` authentication.
+- Logged declined PAY.nl recurring responses with status code, response keys, and PAY.nl request error details such as `PAY-1404` for support/debugging.
+
+### Tests
+
+- Added regression coverage for PAY.nl `byRecurringId` payloads, API-token authentication, and declined-response diagnostics.
+
 ## [0.1.43] - 2026-05-09
 
 ### Added

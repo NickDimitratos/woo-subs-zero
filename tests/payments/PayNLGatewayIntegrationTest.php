@@ -252,7 +252,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertNotEmpty($GLOBALS['wsz_paynl_test_http_requests']);
     }
 
-    public function test_recurring_charge_prefers_service_secret_for_card_authorize(): void
+    public function test_recurring_charge_prefers_api_token_for_by_recurring_id(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
             'token_code' => 'AT-1234-5678',
@@ -280,8 +280,9 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $request = $GLOBALS['wsz_paynl_test_http_requests'][0] ?? array();
 
         $this->assertTrue($result['paid']);
+        $this->assertNotEmpty($request);
         $this->assertSame(
-            'Basic ' . base64_encode('SL-1234-5678:sales-location-secret'),
+            'Basic ' . base64_encode('AT-1234-5678:test-api-token'),
             $request['args']['headers']['Authorization'] ?? ''
         );
     }
@@ -319,7 +320,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
     }
 
-    public function test_authorize_payload_uses_merchant_initiated_token_payment(): void
+    public function test_authorize_payload_uses_paynl_by_recurring_id_shape(): void
     {
         $integration = new WSZ_PayNL_Gateway_Integration();
         $renewal_order = $this->createMock(WC_Order::class);
@@ -341,11 +342,12 @@ final class PayNLGatewayIntegrationTest extends TestCase
             'SL-1234-1234'
         );
 
-        $this->assertSame('mit', $payload['transaction']['type']);
-        $this->assertSame(1234, $payload['transaction']['amount']);
-        $this->assertSame('token', $payload['payment']['method']);
-        $this->assertSame('VY-9212-9171-2390', $payload['payment']['token']['id']);
-        $this->assertSame(1, $payload['options']['tokenization']);
+        $this->assertSame('SL-1234-1234', $payload['serviceId']);
+        $this->assertSame('VY-9212-9171-2390', $payload['recurringId']);
+        $this->assertSame(1234, $payload['amount']);
+        $this->assertSame('EUR', $payload['currency']);
+        $this->assertSame('subscription_10473', $payload['statsData']['extra1']);
+        $this->assertSame('renewal_10474', $payload['statsData']['extra2']);
     }
 
     public function test_paynl_token_exchange_payload_is_detected(): void
@@ -646,7 +648,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('EX-6582-4371-5560', $result['transaction_id'] ?? '');
     }
 
-    public function test_paynl_recurring_charge_treats_request_result_zero_as_declined(): void
+    public function test_paynl_recurring_charge_logs_declined_response_details(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
             'token_code' => 'AT-1234-5678',
@@ -655,7 +657,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
         $GLOBALS['wsz_paynl_test_http_response'] = array(
             'response' => array('code' => 200),
-            'body' => '{"request":{"result":0,"errorId":"PAY-2011","errorTag":"invalidRequest","errorMessage":"Invalid card token."}}',
+            'body' => '{"request":{"result":0,"errorId":"PAY-1404","errorTag":"permissionDenied","errorMessage":"No rights to perform this action"}}',
         );
 
         $integration = new WSZ_PayNL_Gateway_Integration();
@@ -678,8 +680,15 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
 
         $this->assertFalse($result['paid']);
-        $this->assertSame('Invalid card token.', $result['message'] ?? '');
-        $this->assertSame(array(), $logs);
+        $this->assertSame('No rights to perform this action', $result['message'] ?? '');
+        $this->assertSame('PAY.nl recurring charge was not approved.', $logs[0]['message'] ?? '');
+        $this->assertSame('warning', $logs[0]['level'] ?? '');
+        $this->assertSame('10488', $logs[0]['context']['renewal_order_id'] ?? '');
+        $this->assertSame('10487', $logs[0]['context']['subscription_id'] ?? '');
+        $this->assertSame('200', $logs[0]['context']['status_code'] ?? '');
+        $this->assertSame('PAY-1404', $logs[0]['context']['request_error_id'] ?? '');
+        $this->assertSame('permissionDenied', $logs[0]['context']['request_error_tag'] ?? '');
+        $this->assertSame('No rights to perform this action', $logs[0]['context']['request_error_message'] ?? '');
     }
 
     public function test_paynl_recurring_charge_logs_warning_when_paid_response_has_no_transaction_id(): void
