@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.49] - 2026-05-15
+
+### Changed
+
+- Bumped the plugin version to publish a release containing the PAY.nl Visa/Mastercard recurring renewal fix.
+
 ## [0.1.48] - 2026-05-15
 
 ### Fixed
