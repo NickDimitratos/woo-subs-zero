@@ -727,6 +727,14 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('warning', $logs[0]['level'] ?? '');
         $this->assertSame('10488', $logs[0]['context']['renewal_order_id'] ?? '');
         $this->assertSame('10487', $logs[0]['context']['subscription_id'] ?? '');
+        $this->assertSame('Payment/authorize', $logs[0]['context']['paynl_api'] ?? '');
+        $this->assertSame('https://payment.pay.nl/v1/Payment/authorize/json', $logs[0]['context']['paynl_endpoint'] ?? '');
+        $this->assertSame('MIT', $logs[0]['context']['transaction_type'] ?? '');
+        $this->assertSame('token', $logs[0]['context']['payment_method'] ?? '');
+        $this->assertSame('yes', $logs[0]['context']['has_token_id'] ?? '');
+        $this->assertSame('1234', $logs[0]['context']['request_amount'] ?? '');
+        $this->assertSame('EUR', $logs[0]['context']['request_currency'] ?? '');
+        $this->assertSame('WSZ-R10488', $logs[0]['context']['request_reference'] ?? '');
         $this->assertSame('200', $logs[0]['context']['status_code'] ?? '');
         $this->assertSame('PAY-1404', $logs[0]['context']['request_error_id'] ?? '');
         $this->assertSame('permissionDenied', $logs[0]['context']['request_error_tag'] ?? '');

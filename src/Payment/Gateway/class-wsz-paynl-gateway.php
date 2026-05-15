@@ -162,6 +162,18 @@ class WSZ_PayNL_Gateway_Integration
         $request_body = function_exists('wp_json_encode') ? wp_json_encode($payload) : json_encode($payload);
 
         if (!is_string($request_body) || '' === $request_body) {
+            $this->log_diagnostic(
+                'error',
+                __('PAY.nl recurring authorize payload could not be encoded.', 'woo-subzero'),
+                array_merge(
+                    array(
+                        'renewal_order_id' => $renewal_order->get_id(),
+                        'subscription_id' => $subscription->get_id(),
+                    ),
+                    $this->authorize_request_diagnostic_context(self::AUTHORIZE_ENDPOINT, $payload)
+                )
+            );
+
             return array(
                 'paid' => false,
                 'message' => __('PAY.nl recurring payload could not be encoded.', 'woo-subzero'),
@@ -183,6 +195,19 @@ class WSZ_PayNL_Gateway_Integration
         );
 
         if (function_exists('is_wp_error') && is_wp_error($response)) {
+            $this->log_diagnostic(
+                'error',
+                __('PAY.nl recurring authorize request failed.', 'woo-subzero'),
+                array_merge(
+                    array(
+                        'renewal_order_id' => $renewal_order->get_id(),
+                        'subscription_id' => $subscription->get_id(),
+                        'error_message' => $response->get_error_message(),
+                    ),
+                    $this->authorize_request_diagnostic_context($endpoint, $payload)
+                )
+            );
+
             return array(
                 'paid' => false,
                 'message' => $response->get_error_message(),
@@ -222,6 +247,7 @@ class WSZ_PayNL_Gateway_Integration
                         'response_keys' => WSZ_PayNL_Token_Support::payload_keys($decoded),
                         'body_empty' => '' === trim($body) ? 'yes' : 'no',
                     ),
+                    $this->authorize_request_diagnostic_context($endpoint, $payload),
                     $this->authorize_response_diagnostic_context($decoded)
                 )
             );
@@ -239,6 +265,7 @@ class WSZ_PayNL_Gateway_Integration
                         'response_keys' => WSZ_PayNL_Token_Support::payload_keys($decoded),
                         'body_empty' => '' === trim($body) ? 'yes' : 'no',
                     ),
+                    $this->authorize_request_diagnostic_context($endpoint, $payload),
                     $this->authorize_response_diagnostic_context($decoded)
                 )
             );
@@ -1083,6 +1110,28 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         return $context;
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<string,string>
+     */
+    private function authorize_request_diagnostic_context(string $endpoint, array $payload): array
+    {
+        $token_id = $this->first_scalar($payload, array('payment.token.id'));
+
+        return array(
+            'paynl_api' => 'Payment/authorize',
+            'paynl_endpoint' => sanitize_text_field($endpoint),
+            'content_type' => 'application/json',
+            'transaction_type' => $this->first_scalar($payload, array('transaction.type')),
+            'payment_method' => $this->first_scalar($payload, array('payment.method')),
+            'has_token_id' => '' !== $token_id ? 'yes' : 'no',
+            'request_amount' => $this->first_scalar($payload, array('transaction.amount')),
+            'request_currency' => $this->first_scalar($payload, array('transaction.currency')),
+            'request_reference' => $this->first_scalar($payload, array('transaction.reference')),
+            'request_tokenization' => $this->first_scalar($payload, array('options.tokenization')),
+        );
     }
 
     /**
