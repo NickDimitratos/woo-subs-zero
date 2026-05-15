@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.51] - 2026-05-15
+
+### Changed
+
+- Bumped the plugin version to publish a follow-up release for the PAY.nl recurring authorize alignment.
+
 ## [0.1.50] - 2026-05-15
 
 ### Fixed
