@@ -188,7 +188,7 @@ if (!function_exists('wp_remote_post')) {
 
             return $GLOBALS['wsz_paynl_test_http_response'] ?? array(
                 'response' => array('code' => 200),
-                'body' => '{"state":"paid","transactionId":"PAY-RENEWAL-1"}',
+                'body' => '{"request":{"result":1,"errorId":"","errorTag":"","errorMessage":""},"payment":{"bankCode":"00","bankMessage":"Approved"},"transaction":{"transactionId":"PAY-RENEWAL-1","state":"100","stateName":"PAID"}}',
             );
         }
 

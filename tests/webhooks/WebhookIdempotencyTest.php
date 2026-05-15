@@ -95,7 +95,7 @@ final class WebhookIdempotencyTest extends TestCase
         );
     }
 
-    public function test_paynl_token_exchange_payload_accepts_token_id_alias(): void
+    public function test_paynl_token_exchange_payload_ignores_undocumented_token_id_alias(): void
     {
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $handler = new WSZ_Webhook_Handler($subscription_manager);
@@ -114,7 +114,26 @@ final class WebhookIdempotencyTest extends TestCase
             )
         );
 
-        $this->assertTrue($method->invoke($handler, $payload));
+        $this->assertFalse($method->invoke($handler, $payload));
+    }
+
+    public function test_paynl_token_exchange_payload_rejects_invalid_recurring_id_shape(): void
+    {
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $handler = new WSZ_Webhook_Handler($subscription_manager);
+
+        $method = new ReflectionMethod(WSZ_Webhook_Handler::class, 'is_token_exchange_payload');
+        $method->setAccessible(true);
+
+        $this->assertFalse(
+            $method->invoke(
+                $handler,
+                array(
+                    'action' => 'token',
+                    'recurring_id' => 'not-a-vy-token',
+                )
+            )
+        );
     }
 
     public function test_paynl_token_exchange_stores_payment_token_on_order_and_subscription(): void
