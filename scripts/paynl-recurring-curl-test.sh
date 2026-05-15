@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AUTHORIZE_ENDPOINT="${PAYNL_AUTHORIZE_ENDPOINT:-https://payment.pay.nl/v1/Payment/authenticate/json}"
+AUTHORIZE_ENDPOINT="${PAYNL_AUTHORIZE_ENDPOINT:-https://payment.pay.nl/v1/Payment/authorize/json}"
 TRANSACTION_INFO_ENDPOINT="${PAYNL_TRANSACTION_INFO_ENDPOINT:-https://rest.pay.nl/v2/transactions}"
 AMOUNT_CENTS="${PAYNL_AMOUNT_CENTS:-100}"
 CURRENCY="${PAYNL_CURRENCY:-EUR}"
@@ -34,7 +34,7 @@ usage() {
   cat <<'USAGE'
 PAY.nl recurring card curl test.
 
-Dry-run by default. Pass --send to execute the authenticate token request.
+Dry-run by default. Pass --send to execute the authorize token request.
 
 Required environment:
   PAYNL_TOKEN_CODE        Merchant token code, e.g. AT-1234-5678
@@ -190,7 +190,7 @@ Recurring endpoint:
 Payload:
 $PAYLOAD
 
-Run with --send to execute the recurring authenticate token payment request.
+Run with --send to execute the recurring authorize token payment request.
 DRYRUN
   exit 0
 fi

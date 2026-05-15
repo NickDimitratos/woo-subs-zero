@@ -252,7 +252,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertNotEmpty($GLOBALS['wsz_paynl_test_http_requests']);
     }
 
-    public function test_recurring_charge_prefers_api_token_for_authenticate_request(): void
+    public function test_recurring_charge_prefers_api_token_for_authorize_request(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
             'token_code' => 'AT-1234-5678',
@@ -320,7 +320,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
     }
 
-    public function test_authorize_payload_uses_paynl_authenticate_token_shape(): void
+    public function test_authorize_payload_uses_paynl_authorize_token_shape(): void
     {
         $integration = new WSZ_PayNL_Gateway_Integration();
         $renewal_order = $this->createMock(WC_Order::class);
@@ -354,7 +354,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('renewal_10474', $payload['stats']['extra2']);
     }
 
-    public function test_recurring_charge_posts_json_to_paynl_authenticate_endpoint(): void
+    public function test_recurring_charge_posts_json_to_paynl_authorize_endpoint(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
             'token_code' => 'AT-1234-5678',
@@ -384,7 +384,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $body = json_decode((string) ($request['args']['body'] ?? ''), true);
 
         $this->assertTrue($result['paid']);
-        $this->assertSame('https://payment.pay.nl/v1/Payment/authenticate/json', $request['url'] ?? '');
+        $this->assertSame('https://payment.pay.nl/v1/Payment/authorize/json', $request['url'] ?? '');
         $this->assertSame('application/json', $request['args']['headers']['Content-Type'] ?? '');
         $this->assertIsArray($body);
         $this->assertSame('MIT', $body['transaction']['type'] ?? '');

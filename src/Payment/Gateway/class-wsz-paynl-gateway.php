@@ -10,7 +10,7 @@ class WSZ_PayNL_Gateway_Integration
 {
     public const GATEWAY_ID = 'pay_gateway_creditcardsgrouped';
 
-    private const AUTHORIZE_ENDPOINT = 'https://payment.pay.nl/v1/Payment/authenticate/json';
+    private const AUTHORIZE_ENDPOINT = 'https://payment.pay.nl/v1/Payment/authorize/json';
 
     private const TRANSACTION_LOG_OPTION = 'wsz_subs_paynl_card_transactions';
 

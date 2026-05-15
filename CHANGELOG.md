@@ -6,12 +6,12 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Switched PAY.nl recurring card renewals to the Card Payment authenticate endpoint using a token payload with the stored `recurring_id` and `MIT` transaction type.
-- Expanded the PAY.nl manual curl test payload to mirror the authenticate request body sections, including transaction, options, payment, stats, customer, and order data.
+- Switched PAY.nl recurring card renewals to the Card Payment authorize endpoint using a token payload with the stored `recurring_id` and `MIT` transaction type.
+- Expanded the PAY.nl manual curl test payload to mirror the authorize request body sections, including transaction, options, payment, stats, customer, and order data.
 
 ### Tests
 
-- Added regression coverage for PAY.nl authenticate endpoint requests, JSON transport, and token payment payload shape.
+- Added regression coverage for PAY.nl authorize endpoint requests, JSON transport, and token payment payload shape.
 
 ## [0.1.44] - 2026-05-13
 
