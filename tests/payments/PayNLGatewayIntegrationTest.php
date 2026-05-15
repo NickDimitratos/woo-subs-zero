@@ -351,7 +351,9 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $subscription = $this->createMock(WC_Order::class);
 
         $renewal_order->method('get_id')->willReturn(10474);
+        $renewal_order->method('get_customer_ip_address')->willReturn('');
         $subscription->method('get_id')->willReturn(10473);
+        $subscription->method('get_customer_ip_address')->willReturn('203.0.113.42');
 
         $method = new ReflectionMethod(WSZ_PayNL_Gateway_Integration::class, 'build_authorize_payload');
         $method->setAccessible(true);
@@ -371,6 +373,8 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('WSZ-R10474', $payload['transaction']['reference']);
         $this->assertSame(1234, $payload['transaction']['amount']);
         $this->assertSame('EUR', $payload['transaction']['currency']);
+        $this->assertSame('203.0.113.42', $payload['transaction']['ipAddress']);
+        $this->assertSame('EN', $payload['transaction']['language']);
         $this->assertSame(1, $payload['options']['tokenization']);
         $this->assertSame('token', $payload['payment']['method']);
         $this->assertSame('VY-9212-9171-2390', $payload['payment']['token']['id']);
@@ -412,6 +416,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('application/json', $request['args']['headers']['Content-Type'] ?? '');
         $this->assertIsArray($body);
         $this->assertSame('MIT', $body['transaction']['type'] ?? '');
+        $this->assertArrayHasKey('ipAddress', $body['transaction'] ?? array());
         $this->assertSame('token', $body['payment']['method'] ?? '');
         $this->assertSame('VY-9212-9171-2390', $body['payment']['token']['id'] ?? '');
     }
