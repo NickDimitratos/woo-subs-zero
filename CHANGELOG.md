@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.50] - 2026-05-15
+
+### Fixed
+
+- Aligned PAY.nl recurring authorize requests with the Card Payment API schema by including a valid transaction IP address and language alongside the MIT token payment payload.
+
+### Tests
+
+- Added regression coverage for the PAY.nl authorize token payload fields required by the official documentation.
+
 ## [0.1.49] - 2026-05-15
 
 ### Changed

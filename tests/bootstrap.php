@@ -358,6 +358,11 @@ if (!class_exists('WC_Order')) {
             return '';
         }
 
+        public function get_customer_ip_address()
+        {
+            return '';
+        }
+
         public function get_order_key()
         {
             return '';

@@ -578,6 +578,8 @@ class WSZ_PayNL_Gateway_Integration
                 'reference' => $reference,
                 'amount' => max(0, (int) round($amount * 100)),
                 'currency' => strtoupper($currency ?: get_woocommerce_currency()),
+                'ipAddress' => $this->resolve_authorize_ip_address($renewal_order, $subscription),
+                'language' => 'EN',
                 'exchangeUrl' => $this->get_exchange_url(),
             ),
             'options' => array(
@@ -596,6 +598,45 @@ class WSZ_PayNL_Gateway_Integration
                 'object' => 'Woo Subs-Zero ' . (defined('WSZ_WOO_SUBZERO_VERSION') ? WSZ_WOO_SUBZERO_VERSION : ''),
             ),
         );
+    }
+
+    private function resolve_authorize_ip_address(WC_Order $renewal_order, WC_Order $subscription): string
+    {
+        $ip_address = '';
+
+        foreach (array($renewal_order, $subscription) as $order) {
+            if (is_callable(array($order, 'get_customer_ip_address'))) {
+                $ip_address = (string) $order->get_customer_ip_address();
+
+                if ('' !== $ip_address) {
+                    break;
+                }
+            }
+        }
+
+        if ('' === $ip_address) {
+            foreach (array('REMOTE_ADDR', 'SERVER_ADDR') as $server_key) {
+                if (!empty($_SERVER[$server_key]) && is_scalar($_SERVER[$server_key])) {
+                    $ip_address = (string) $_SERVER[$server_key];
+                    break;
+                }
+            }
+        }
+
+        $ip_address = (string) apply_filters(
+            'wsz_subs_paynl_recurring_ip_address',
+            $ip_address,
+            $renewal_order,
+            $subscription
+        );
+
+        $ip_address = trim($ip_address);
+
+        if (false !== filter_var($ip_address, FILTER_VALIDATE_IP)) {
+            return $ip_address;
+        }
+
+        return '127.0.0.1';
     }
 
     /**
