@@ -10,7 +10,7 @@ class WSZ_PayNL_Gateway_Integration
 {
     public const GATEWAY_ID = 'pay_gateway_creditcardsgrouped';
 
-    private const AUTHORIZE_ENDPOINT = 'https://rest-api.pay.nl/v18/transaction/byRecurringId/json';
+    private const AUTHORIZE_ENDPOINT = 'https://payment.pay.nl/v1/Payment/authenticate/json';
 
     private const TRANSACTION_LOG_OPTION = 'wsz_subs_paynl_card_transactions';
 
@@ -159,6 +159,15 @@ class WSZ_PayNL_Gateway_Integration
             $subscription
         );
 
+        $request_body = function_exists('wp_json_encode') ? wp_json_encode($payload) : json_encode($payload);
+
+        if (!is_string($request_body) || '' === $request_body) {
+            return array(
+                'paid' => false,
+                'message' => __('PAY.nl recurring payload could not be encoded.', 'woo-subzero'),
+            );
+        }
+
         $endpoint = (string) apply_filters('wsz_subs_paynl_authorize_endpoint', self::AUTHORIZE_ENDPOINT);
         $response = wp_remote_post(
             $endpoint,
@@ -167,8 +176,9 @@ class WSZ_PayNL_Gateway_Integration
                 'headers' => array(
                     'Authorization' => 'Basic ' . base64_encode((string) $credentials['username'] . ':' . (string) $credentials['password']),
                     'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
                 ),
-                'body' => $payload,
+                'body' => $request_body,
             )
         );
 
@@ -532,12 +542,25 @@ class WSZ_PayNL_Gateway_Integration
         $reference = 'WSZ-R' . $renewal_order->get_id();
 
         return array(
-            'serviceId' => $service_id,
-            'recurringId' => $recurring_id,
-            'amount' => max(0, (int) round($amount * 100)),
-            'currency' => strtoupper($currency ?: get_woocommerce_currency()),
-            'description' => sprintf('Renewal order %d', $renewal_order->get_id()),
-            'statsData' => array(
+            'transaction' => array(
+                'type' => 'MIT',
+                'serviceId' => $service_id,
+                'description' => sprintf('Renewal order %d', $renewal_order->get_id()),
+                'reference' => $reference,
+                'amount' => max(0, (int) round($amount * 100)),
+                'currency' => strtoupper($currency ?: get_woocommerce_currency()),
+                'exchangeUrl' => $this->get_exchange_url(),
+            ),
+            'options' => array(
+                'tokenization' => 1,
+            ),
+            'payment' => array(
+                'method' => 'token',
+                'token' => array(
+                    'id' => $recurring_id,
+                ),
+            ),
+            'stats' => array(
                 'extra1' => 'subscription_' . $subscription->get_id(),
                 'extra2' => 'renewal_' . $renewal_order->get_id(),
                 'extra3' => $reference,
