@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AUTHORIZE_ENDPOINT="${PAYNL_AUTHORIZE_ENDPOINT:-https://rest-api.pay.nl/v18/transaction/byRecurringId/json}"
+AUTHORIZE_ENDPOINT="${PAYNL_AUTHORIZE_ENDPOINT:-https://payment.pay.nl/v1/Payment/authorize/json}"
 TRANSACTION_INFO_ENDPOINT="${PAYNL_TRANSACTION_INFO_ENDPOINT:-https://rest.pay.nl/v2/transactions}"
 AMOUNT_CENTS="${PAYNL_AMOUNT_CENTS:-100}"
 CURRENCY="${PAYNL_CURRENCY:-EUR}"
 DESCRIPTION="${PAYNL_DESCRIPTION:-WSZ recurring renewal test}"
 REFERENCE="${PAYNL_REFERENCE:-WSZ-RTEST-$(date -u +%Y%m%d%H%M%S)}"
+EXCHANGE_URL="${PAYNL_EXCHANGE_URL:-https://pay.nl/exchange}"
+LANGUAGE="${PAYNL_LANGUAGE:-EN}"
+EXPIRE_DATE="${PAYNL_EXPIRE_DATE:-$(( $(date -u +%s) + 3600 ))}"
+CUSTOMER_REFERENCE="${PAYNL_CUSTOMER_REFERENCE:-WSZ recurring test customer}"
+CUSTOMER_FIRST_NAME="${PAYNL_CUSTOMER_FIRST_NAME:-Woo}"
+CUSTOMER_LAST_NAME="${PAYNL_CUSTOMER_LAST_NAME:-Subzero}"
+CUSTOMER_EMAIL="${PAYNL_CUSTOMER_EMAIL:-paynl-recurring-test@example.invalid}"
+PRODUCT_ID="${PAYNL_PRODUCT_ID:-WSZ_RENEWAL_TEST}"
+PRODUCT_DESCRIPTION="${PAYNL_PRODUCT_DESCRIPTION:-Woo Subs-Zero renewal test}"
+PRODUCT_VAT_PERCENTAGE="${PAYNL_PRODUCT_VAT_PERCENTAGE:-0}"
+INVOICE_DATE="${PAYNL_INVOICE_DATE:-$(date -u +%Y-%m-%d)}"
+DELIVERY_DATE="${PAYNL_DELIVERY_DATE:-$INVOICE_DATE}"
 SEND_REQUEST=0
 RESPONSE_FILE=""
 
@@ -22,7 +34,7 @@ usage() {
   cat <<'USAGE'
 PAY.nl recurring card curl test.
 
-Dry-run by default. Pass --send to execute the byRecurringId request.
+Dry-run by default. Pass --send to execute the authorize token request.
 
 Required environment:
   PAYNL_TOKEN_CODE        Merchant token code, e.g. AT-1234-5678
@@ -35,6 +47,18 @@ Optional environment:
   PAYNL_CURRENCY          Currency. Default: EUR
   PAYNL_REFERENCE         Merchant reference. Default: WSZ-RTEST-{UTC timestamp}
   PAYNL_DESCRIPTION       Transaction description
+  PAYNL_EXCHANGE_URL      Exchange endpoint included in the transaction payload
+  PAYNL_LANGUAGE          ISO-639 language code. Default: EN
+  PAYNL_EXPIRE_DATE       Unix timestamp. Default: now + 1 hour
+  PAYNL_CUSTOMER_REFERENCE
+  PAYNL_CUSTOMER_FIRST_NAME
+  PAYNL_CUSTOMER_LAST_NAME
+  PAYNL_CUSTOMER_EMAIL
+  PAYNL_PRODUCT_ID
+  PAYNL_PRODUCT_DESCRIPTION
+  PAYNL_PRODUCT_VAT_PERCENTAGE
+  PAYNL_INVOICE_DATE      YYYY-MM-DD. Default: today in UTC
+  PAYNL_DELIVERY_DATE     YYYY-MM-DD. Default: invoice date
   PAYNL_AUTHORIZE_ENDPOINT
   PAYNL_TRANSACTION_INFO_ENDPOINT
 
@@ -91,16 +115,65 @@ PAYLOAD="$(PAYNL_SERVICE_ID="$PAYNL_SERVICE_ID" \
   PAYNL_CURRENCY="$CURRENCY" \
   PAYNL_DESCRIPTION="$DESCRIPTION" \
   PAYNL_REFERENCE="$REFERENCE" \
+  PAYNL_EXCHANGE_URL="$EXCHANGE_URL" \
+  PAYNL_LANGUAGE="$LANGUAGE" \
+  PAYNL_EXPIRE_DATE="$EXPIRE_DATE" \
+  PAYNL_CUSTOMER_REFERENCE="$CUSTOMER_REFERENCE" \
+  PAYNL_CUSTOMER_FIRST_NAME="$CUSTOMER_FIRST_NAME" \
+  PAYNL_CUSTOMER_LAST_NAME="$CUSTOMER_LAST_NAME" \
+  PAYNL_CUSTOMER_EMAIL="$CUSTOMER_EMAIL" \
+  PAYNL_PRODUCT_ID="$PRODUCT_ID" \
+  PAYNL_PRODUCT_DESCRIPTION="$PRODUCT_DESCRIPTION" \
+  PAYNL_PRODUCT_VAT_PERCENTAGE="$PRODUCT_VAT_PERCENTAGE" \
+  PAYNL_INVOICE_DATE="$INVOICE_DATE" \
+  PAYNL_DELIVERY_DATE="$DELIVERY_DATE" \
   php -r '
 $payload = [
-    "serviceId" => getenv("PAYNL_SERVICE_ID"),
-    "recurringId" => getenv("PAYNL_RECURRING_ID"),
-    "amount" => (int) getenv("PAYNL_AMOUNT_CENTS"),
-    "currency" => getenv("PAYNL_CURRENCY"),
-    "description" => getenv("PAYNL_DESCRIPTION"),
-    "statsData" => [
+    "transaction" => [
+        "type" => "MIT",
+        "serviceId" => getenv("PAYNL_SERVICE_ID"),
+        "description" => getenv("PAYNL_DESCRIPTION"),
+        "reference" => getenv("PAYNL_REFERENCE"),
+        "amount" => (int) getenv("PAYNL_AMOUNT_CENTS"),
+        "currency" => getenv("PAYNL_CURRENCY"),
+        "language" => getenv("PAYNL_LANGUAGE"),
+        "exchangeUrl" => getenv("PAYNL_EXCHANGE_URL"),
+        "expireDate" => (int) getenv("PAYNL_EXPIRE_DATE"),
+    ],
+    "options" => [
+        "tokenization" => 1,
+    ],
+    "payment" => [
+        "method" => "token",
+        "token" => [
+            "id" => getenv("PAYNL_RECURRING_ID"),
+        ],
+    ],
+    "stats" => [
+        "extra1" => "curl_test",
+        "extra2" => "renewal_test",
         "extra3" => getenv("PAYNL_REFERENCE"),
         "object" => "Woo Subs-Zero curl test",
+    ],
+    "customer" => [
+        "reference" => getenv("PAYNL_CUSTOMER_REFERENCE"),
+        "firstName" => getenv("PAYNL_CUSTOMER_FIRST_NAME"),
+        "lastName" => getenv("PAYNL_CUSTOMER_LAST_NAME"),
+        "emailAddress" => getenv("PAYNL_CUSTOMER_EMAIL"),
+    ],
+    "order" => [
+        "products" => [
+            [
+                "type" => "ARTICLE",
+                "id" => getenv("PAYNL_PRODUCT_ID"),
+                "description" => getenv("PAYNL_PRODUCT_DESCRIPTION"),
+                "amount" => (int) getenv("PAYNL_AMOUNT_CENTS"),
+                "quantity" => 1,
+                "vatPercentage" => (float) getenv("PAYNL_PRODUCT_VAT_PERCENTAGE"),
+            ],
+        ],
+        "deliveryDate" => getenv("PAYNL_DELIVERY_DATE"),
+        "invoiceDate" => getenv("PAYNL_INVOICE_DATE"),
     ],
 ];
 
@@ -117,15 +190,10 @@ Recurring endpoint:
 Payload:
 $PAYLOAD
 
-Run with --send to execute the recurring byRecurringId payment request.
+Run with --send to execute the recurring authorize token payment request.
 DRYRUN
   exit 0
 fi
-
-FORM_BODY="$(PAYLOAD="$PAYLOAD" php -r '
-$payload = json_decode(getenv("PAYLOAD"), true);
-echo http_build_query($payload, "", "&", PHP_QUERY_RFC3986);
-')"
 
 RESPONSE_FILE="$(mktemp)"
 HTTP_STATUS="$(
@@ -134,8 +202,8 @@ HTTP_STATUS="$(
     --url "$AUTHORIZE_ENDPOINT" \
     --user "$PAYNL_TOKEN_CODE:$PAYNL_API_TOKEN" \
     --header 'accept: application/json' \
-    --header 'content-type: application/x-www-form-urlencoded' \
-    --data "$FORM_BODY" \
+    --header 'content-type: application/json' \
+    --data "$PAYLOAD" \
     --write-out '%{http_code}' \
     --output "$RESPONSE_FILE"
 )"
