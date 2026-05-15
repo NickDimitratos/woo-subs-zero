@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.47] - 2026-05-15
+
+### Changed
+
+- Bumped the plugin version to validate the deduplicated Build and Release Package workflow on `main`.
+
 ## [0.1.46] - 2026-05-15
 
 ### Fixed
