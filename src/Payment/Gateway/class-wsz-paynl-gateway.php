@@ -10,6 +10,8 @@ class WSZ_PayNL_Gateway_Integration
 {
     public const GATEWAY_ID = 'pay_gateway_creditcardsgrouped';
 
+    public const VISA_MASTERCARD_GATEWAY_ID = 'pay_gateway_visamastercard';
+
     private const AUTHORIZE_ENDPOINT = 'https://payment.pay.nl/v1/Payment/authorize/json';
 
     private const TRANSACTION_LOG_OPTION = 'wsz_subs_paynl_card_transactions';
@@ -932,11 +934,11 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         $gateway_ids = function_exists('apply_filters')
-            ? apply_filters('wsz_subs_paynl_gateway_ids', array(self::GATEWAY_ID))
-            : array(self::GATEWAY_ID);
+            ? apply_filters('wsz_subs_paynl_gateway_ids', self::default_gateway_ids())
+            : self::default_gateway_ids();
 
         if (!is_array($gateway_ids)) {
-            $gateway_ids = array(self::GATEWAY_ID);
+            $gateway_ids = self::default_gateway_ids();
         }
 
         $normalized = array();
@@ -1399,11 +1401,11 @@ class WSZ_PayNL_Gateway_Integration
     {
         $gateway_ids = apply_filters(
             'wsz_subs_paynl_gateway_ids',
-            array(self::GATEWAY_ID)
+            self::default_gateway_ids()
         );
 
         if (!is_array($gateway_ids)) {
-            return array(self::GATEWAY_ID);
+            return self::default_gateway_ids();
         }
 
         $normalized = array();
@@ -1415,6 +1417,14 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         return array_values(array_unique($normalized));
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private static function default_gateway_ids(): array
+    {
+        return array(self::GATEWAY_ID, self::VISA_MASTERCARD_GATEWAY_ID);
     }
 
     private function is_paynl_tokens_enabled(): bool

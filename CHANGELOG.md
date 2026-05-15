@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.48] - 2026-05-15
+
+### Fixed
+
+- Added PAY.nl Visa/Mastercard gateway ID support for tokenized recurring renewals, so subscriptions created with `pay_gateway_visamastercard` use the PAY.nl authorize token charge path.
+
+### Tests
+
+- Added regression coverage for PAY.nl Visa/Mastercard gateway callback registration.
+
 ## [0.1.47] - 2026-05-15
 
 ### Changed

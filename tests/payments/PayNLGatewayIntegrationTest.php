@@ -160,11 +160,13 @@ final class PayNLGatewayIntegrationTest extends TestCase
     public function test_register_gateway_ids_adds_creditcards_grouped_gateway(): void
     {
         $integration = new WSZ_PayNL_Gateway_Integration();
+        $gateway_ids = $integration->register_gateway_ids(array());
 
         $this->assertContains(
             WSZ_PayNL_Gateway_Integration::GATEWAY_ID,
-            $integration->register_gateway_ids(array())
+            $gateway_ids
         );
+        $this->assertContains('pay_gateway_visamastercard', $gateway_ids);
     }
 
     public function test_integration_is_disabled_by_default(): void
@@ -189,6 +191,28 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $renewal_order
             ->method('get_payment_method')
             ->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        $callback = $integration->provide_recurring_charge_callback(
+            null,
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $this->assertIsCallable($callback);
+    }
+
+    public function test_recurring_callback_is_provided_for_paynl_visa_mastercard_renewal_orders(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $renewal_order
+            ->method('get_payment_method')
+            ->willReturn('pay_gateway_visamastercard');
 
         $callback = $integration->provide_recurring_charge_callback(
             null,
