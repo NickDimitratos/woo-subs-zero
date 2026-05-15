@@ -43,7 +43,9 @@ class WSZ_PayNL_Token_Support
             return '';
         }
 
-        return sanitize_text_field((string) $payload[$key]);
+        $recurring_id = sanitize_text_field((string) $payload[$key]);
+
+        return self::is_chargeable_recurring_id($recurring_id) ? $recurring_id : '';
     }
 
     /**
@@ -310,23 +312,10 @@ class WSZ_PayNL_Token_Support
             'recurringreference',
             'recurring_reference_id',
             'recurringreferenceid',
-            'token',
-            'token_id',
-            'tokenid',
-            'payment_token',
-            'payment_token_id',
-            'payment_tokenid',
             'payment_token_recurring_id',
             'payment_token_recurringid',
             'payment_recurring_id',
             'payment_recurringid',
-            'mandate',
-            'mandate_id',
-            'mandateid',
-            'payment_mandate_id',
-            'payment_mandateid',
-            'alias',
-            'card_alias',
         );
     }
 
@@ -356,12 +345,6 @@ class WSZ_PayNL_Token_Support
             'recurringreference',
             'recurring_token',
             'recurringtoken',
-            'mandate_id',
-            'mandateid',
-            'paynl_mandate_id',
-            'paynl_mandateid',
-            'paynl_token_id',
-            'paynl_tokenid',
         );
 
         if (in_array($key, $exact_keys, true)) {
@@ -372,14 +355,9 @@ class WSZ_PayNL_Token_Support
             return true;
         }
 
-        if (false !== strpos($key, 'paynl') && false !== strpos($key, 'mandate')) {
-            return true;
-        }
-
         return false !== strpos($key, 'recurring')
             && (
                 false !== strpos($key, 'id')
-                || false !== strpos($key, 'token')
                 || false !== strpos($key, 'reference')
             );
     }
@@ -418,7 +396,14 @@ class WSZ_PayNL_Token_Support
             return '';
         }
 
-        return sanitize_text_field($value);
+        $recurring_id = sanitize_text_field($value);
+
+        return self::is_chargeable_recurring_id($recurring_id) ? $recurring_id : '';
+    }
+
+    private static function is_chargeable_recurring_id(string $recurring_id): bool
+    {
+        return 1 === preg_match('/^VY-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i', $recurring_id);
     }
 
     private static function is_non_chargeable_recurring_token_key(string $key): bool

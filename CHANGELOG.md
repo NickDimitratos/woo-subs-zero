@@ -2,6 +2,41 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.54] - 2026-05-15
+
+### Changed
+
+- Allowed PAY.nl tokenized renewals for any PAY.nl gateway ID using the `pay_gateway_*` prefix, so future PAY.nl card gateway IDs do not need plugin updates.
+
+### Tests
+
+- Added regression coverage for dynamic PAY.nl gateway callback routing and tokenized renewal dispatch.
+
+## [0.1.53] - 2026-05-15
+
+### Fixed
+
+- Added PAY.nl individual Visa and Mastercard gateway IDs (`pay_gateway_visa`, `pay_gateway_mastercard`) to the recurring authorize token charge path.
+
+### Tests
+
+- Added regression coverage that PAY.nl individual Visa renewal orders receive the recurring charge callback.
+
+## [0.1.52] - 2026-05-15
+
+### Changed
+
+- Cleaned up PAY.nl recurring token handling to only accept documented recurring-id fields instead of generic token, mandate, or alias values.
+- Required an explicit approved PAY.nl authorize transaction status before completing automatic renewals.
+- Required documented `request.result=1`, approved `transaction.state/stateName`, positive cent amounts, and `VY-XXXX-XXXX-XXXX` recurring IDs for PAY.nl authorize handling while only reading transaction identifiers from documented response fields.
+- Removed `options.tokenization` from recurring authorize token charges because the documented existing-token charge shape uses `payment.method=token` with `payment.token.id`.
+- Removed the legacy Sales Location secret fallback from PAY.nl recurring authorize credentials so the request path uses the documented `AT-code:API token` authentication.
+- Updated the PAY.nl recurring curl test payload and compatibility notes to match the current authorize token-payment documentation.
+
+### Tests
+
+- Added regression coverage for rejecting undocumented PAY.nl token aliases, ambiguous authorize responses, and non-documented credential fallback.
+
 ## [0.1.51] - 2026-05-15
 
 ### Changed

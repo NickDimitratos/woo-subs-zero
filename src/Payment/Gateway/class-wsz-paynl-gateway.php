@@ -12,6 +12,12 @@ class WSZ_PayNL_Gateway_Integration
 
     public const VISA_MASTERCARD_GATEWAY_ID = 'pay_gateway_visamastercard';
 
+    public const VISA_GATEWAY_ID = 'pay_gateway_visa';
+
+    public const MASTERCARD_GATEWAY_ID = 'pay_gateway_mastercard';
+
+    private const GATEWAY_ID_PREFIX = 'pay_gateway_';
+
     private const AUTHORIZE_ENDPOINT = 'https://payment.pay.nl/v1/Payment/authorize/json';
 
     private const TRANSACTION_LOG_OPTION = 'wsz_subs_paynl_card_transactions';
@@ -95,7 +101,7 @@ class WSZ_PayNL_Gateway_Integration
 
         $gateway_id = sanitize_key((string) $renewal_order->get_payment_method());
 
-        if (!in_array($gateway_id, $this->get_gateway_ids(), true)) {
+        if (!self::is_supported_gateway_id($gateway_id)) {
             return $callback;
         }
 
@@ -126,6 +132,20 @@ class WSZ_PayNL_Gateway_Integration
         WC_Order $renewal_order,
         WC_Order $subscription
     ): array {
+        if (!$this->is_valid_recurring_id($recurring_id)) {
+            return array(
+                'paid' => false,
+                'message' => __('PAY.nl recurring_id must use the documented VY-XXXX-XXXX-XXXX token format.', 'woo-subzero'),
+            );
+        }
+
+        if ($this->amount_to_cents($amount) < 1) {
+            return array(
+                'paid' => false,
+                'message' => __('PAY.nl recurring amount must be a positive integer in cents.', 'woo-subzero'),
+            );
+        }
+
         $credentials = $this->resolve_credentials($renewal_order, $subscription);
 
         if (empty($credentials['service_id']) || empty($credentials['username']) || empty($credentials['password'])) {
@@ -537,7 +557,7 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         $gateway_id = sanitize_key((string) $order->get_payment_method());
-        if ('' !== $gateway_id && !in_array($gateway_id, $this->get_gateway_ids(), true)) {
+        if ('' !== $gateway_id && !self::is_supported_gateway_id($gateway_id)) {
             return 0;
         }
 
@@ -576,14 +596,11 @@ class WSZ_PayNL_Gateway_Integration
                 'serviceId' => $service_id,
                 'description' => sprintf('Renewal order %d', $renewal_order->get_id()),
                 'reference' => $reference,
-                'amount' => max(0, (int) round($amount * 100)),
+                'amount' => $this->amount_to_cents($amount),
                 'currency' => strtoupper($currency ?: get_woocommerce_currency()),
                 'ipAddress' => $this->resolve_authorize_ip_address($renewal_order, $subscription),
                 'language' => 'EN',
                 'exchangeUrl' => $this->get_exchange_url(),
-            ),
-            'options' => array(
-                'tokenization' => 1,
             ),
             'payment' => array(
                 'method' => 'token',
@@ -637,6 +654,16 @@ class WSZ_PayNL_Gateway_Integration
         }
 
         return '127.0.0.1';
+    }
+
+    private function amount_to_cents(float $amount): int
+    {
+        return (int) round($amount * 100);
+    }
+
+    private function is_valid_recurring_id(string $recurring_id): bool
+    {
+        return 1 === preg_match('/^VY-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/i', trim($recurring_id));
     }
 
     /**
@@ -964,7 +991,7 @@ class WSZ_PayNL_Gateway_Integration
         );
     }
 
-    private static function is_supported_gateway_id(string $gateway_id): bool
+    public static function is_supported_gateway_id(string $gateway_id): bool
     {
         $gateway_id = function_exists('sanitize_key')
             ? sanitize_key($gateway_id)
@@ -972,6 +999,10 @@ class WSZ_PayNL_Gateway_Integration
 
         if ('' === $gateway_id) {
             return false;
+        }
+
+        if (0 === strpos($gateway_id, self::GATEWAY_ID_PREFIX)) {
+            return true;
         }
 
         $gateway_ids = function_exists('apply_filters')
@@ -1030,43 +1061,16 @@ class WSZ_PayNL_Gateway_Integration
         $transaction_id = $this->first_scalar(
             $decoded,
             array(
-                'transactionId',
-                'transaction_id',
                 'transaction.transactionId',
-                'transaction.transaction_id',
-                'transaction.id',
-                'paymentSessionId',
-                'payment_session_id',
-                'payment.id',
-                'paymentId',
-                'payment_id',
-                'paymentSession.id',
-                'payment_session.id',
-                'transaction.paymentSessionId',
-                'transaction.payment_session_id',
-                'transaction.orderId',
-                'transaction.order_id',
-                'orderId',
-                'order_id',
-                'id',
             )
         );
-        $request_result = $this->first_scalar($decoded, array('request.result', 'request_result'));
+        $request_result = $this->first_scalar($decoded, array('request.result'));
         $status = strtolower(
             $this->first_scalar(
                 $decoded,
                 array(
-                    'state',
-                    'status',
-                    'transaction.stateName',
-                    'transaction.state_name',
-                    'transaction.status',
                     'transaction.state',
-                    'status.action',
-                    'status.code',
-                    'payment.status',
-                    'payment.bankMessage',
-                    'result',
+                    'transaction.stateName',
                 )
             )
         );
@@ -1078,13 +1082,18 @@ class WSZ_PayNL_Gateway_Integration
             );
         }
 
-        if ($status_code >= 200 && $status_code < 300) {
-            if ('' === $status || $this->is_paid_authorize_status($status)) {
-                return array(
-                    'paid' => true,
-                    'transaction_id' => $transaction_id,
-                );
-            }
+        if ('1' !== $request_result) {
+            return array(
+                'paid' => false,
+                'message' => $this->resolve_authorize_error_message($decoded),
+            );
+        }
+
+        if ($status_code >= 200 && $status_code < 300 && $this->is_paid_authorize_status($status)) {
+            return array(
+                'paid' => true,
+                'transaction_id' => $transaction_id,
+            );
         }
 
         return array(
@@ -1101,7 +1110,7 @@ class WSZ_PayNL_Gateway_Integration
             return true;
         }
 
-        return in_array($status, array('paid', 'success', 'approved', 'authorized', 'authorised', 'captured'), true);
+        return 'paid' === $status;
     }
 
     /**
@@ -1109,17 +1118,22 @@ class WSZ_PayNL_Gateway_Integration
      */
     private function resolve_authorize_error_message(array $decoded): string
     {
+        $request_result = $this->first_scalar($decoded, array('request.result'));
+
+        if ('' === $request_result) {
+            return __('PAY.nl recurring charge response did not include the documented request result.', 'woo-subzero');
+        }
+
+        if ('1' === $request_result) {
+            return __('PAY.nl recurring charge response did not include an approved transaction status.', 'woo-subzero');
+        }
+
         $message = $this->first_scalar(
             $decoded,
             array(
                 'request.errorMessage',
-                'request.error_message',
                 'request.errorTag',
-                'request.error_tag',
-                'message',
-                'error.message',
-                'error_description',
-                'description',
+                'request.errorId',
             )
         );
 
@@ -1134,14 +1148,14 @@ class WSZ_PayNL_Gateway_Integration
     {
         $context = array();
         $fields = array(
-            'request_result' => array('request.result', 'request_result'),
-            'request_error_id' => array('request.errorId', 'request.error_id'),
-            'request_error_tag' => array('request.errorTag', 'request.error_tag'),
-            'request_error_message' => array('request.errorMessage', 'request.error_message'),
+            'request_result' => array('request.result'),
+            'request_error_id' => array('request.errorId'),
+            'request_error_tag' => array('request.errorTag'),
+            'request_error_message' => array('request.errorMessage'),
             'transaction_state' => array('transaction.state'),
-            'transaction_state_name' => array('transaction.stateName', 'transaction.state_name'),
-            'payment_bank_code' => array('payment.bankCode', 'payment.bank_code'),
-            'payment_bank_message' => array('payment.bankMessage', 'payment.bank_message'),
+            'transaction_state_name' => array('transaction.stateName'),
+            'payment_bank_code' => array('payment.bankCode'),
+            'payment_bank_message' => array('payment.bankMessage'),
         );
 
         foreach ($fields as $context_key => $paths) {
@@ -1173,7 +1187,6 @@ class WSZ_PayNL_Gateway_Integration
             'request_amount' => $this->first_scalar($payload, array('transaction.amount')),
             'request_currency' => $this->first_scalar($payload, array('transaction.currency')),
             'request_reference' => $this->first_scalar($payload, array('transaction.reference')),
-            'request_tokenization' => $this->first_scalar($payload, array('options.tokenization')),
         );
     }
 
@@ -1187,14 +1200,9 @@ class WSZ_PayNL_Gateway_Integration
         $paynl_settings = $this->get_paynl_plugin_credentials();
 
         $service_id = $this->first_setting($settings, array('service_id', 'serviceId', 'service', 'service_location_id', 'sales_location_id'));
-        $service_secret = $this->first_setting($settings, array('service_secret', 'serviceSecret', 'service_location_secret', 'sales_location_secret', 'saleslocation_secret'));
 
         if ('' === $service_id) {
             $service_id = $paynl_settings['service_id'] ?? '';
-        }
-
-        if ('' === $service_secret) {
-            $service_secret = $paynl_settings['service_secret'] ?? '';
         }
 
         $credentials = array(
@@ -1209,11 +1217,6 @@ class WSZ_PayNL_Gateway_Integration
             }
         }
 
-        if ('' === $credentials['username'] && '' !== $service_id && '' !== $service_secret) {
-            $credentials['username'] = $service_id;
-            $credentials['password'] = $service_secret;
-        }
-
         return apply_filters('wsz_subs_paynl_recurring_credentials', $credentials, $renewal_order, $subscription, $settings);
     }
 
@@ -1226,7 +1229,6 @@ class WSZ_PayNL_Gateway_Integration
             'service_id' => '',
             'username' => '',
             'password' => '',
-            'service_secret' => '',
         );
 
         if (class_exists('PPMFWC_Helper_Config')) {
@@ -1242,9 +1244,6 @@ class WSZ_PayNL_Gateway_Integration
                 $credentials['password'] = trim((string) PPMFWC_Helper_Config::getApiToken());
             }
 
-            if (is_callable(array('PPMFWC_Helper_Config', 'getServiceSecret'))) {
-                $credentials['service_secret'] = trim((string) PPMFWC_Helper_Config::getServiceSecret());
-            }
         }
 
         if ('' === $credentials['service_id']) {
@@ -1257,14 +1256,6 @@ class WSZ_PayNL_Gateway_Integration
 
         if ('' === $credentials['password']) {
             $credentials['password'] = $this->get_paynl_constant_or_option('PAYNL_API_TOKEN', 'paynl_apitoken');
-        }
-
-        if ('' === $credentials['service_secret']) {
-            $credentials['service_secret'] = $this->get_paynl_constant_or_option('PAYNL_SERVICE_SECRET', 'paynl_service_secret');
-        }
-
-        if ('' === $credentials['service_secret']) {
-            $credentials['service_secret'] = $this->get_paynl_constant_or_option('PAYNL_SECRET', 'paynl_secret');
         }
 
         return $credentials;
@@ -1465,7 +1456,12 @@ class WSZ_PayNL_Gateway_Integration
      */
     private static function default_gateway_ids(): array
     {
-        return array(self::GATEWAY_ID, self::VISA_MASTERCARD_GATEWAY_ID);
+        return array(
+            self::GATEWAY_ID,
+            self::VISA_MASTERCARD_GATEWAY_ID,
+            self::VISA_GATEWAY_ID,
+            self::MASTERCARD_GATEWAY_ID,
+        );
     }
 
     private function is_paynl_tokens_enabled(): bool

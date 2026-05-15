@@ -56,7 +56,7 @@ if (!function_exists('wp_remote_post')) {
 
         return $GLOBALS['wsz_paynl_test_http_response'] ?? array(
             'response' => array('code' => 200),
-            'body' => '{"state":"paid","transactionId":"PAY-RENEWAL-1"}',
+            'body' => '{"request":{"result":1,"errorId":"","errorTag":"","errorMessage":""},"payment":{"bankCode":"00","bankMessage":"Approved"},"transaction":{"transactionId":"PAY-RENEWAL-1","state":"100","stateName":"PAID"}}',
         );
     }
 }
@@ -167,6 +167,8 @@ final class PayNLGatewayIntegrationTest extends TestCase
             $gateway_ids
         );
         $this->assertContains('pay_gateway_visamastercard', $gateway_ids);
+        $this->assertContains('pay_gateway_visa', $gateway_ids);
+        $this->assertContains('pay_gateway_mastercard', $gateway_ids);
     }
 
     public function test_integration_is_disabled_by_default(): void
@@ -213,6 +215,50 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $renewal_order
             ->method('get_payment_method')
             ->willReturn('pay_gateway_visamastercard');
+
+        $callback = $integration->provide_recurring_charge_callback(
+            null,
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $this->assertIsCallable($callback);
+    }
+
+    public function test_recurring_callback_is_provided_for_paynl_individual_visa_renewal_orders(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $renewal_order
+            ->method('get_payment_method')
+            ->willReturn('pay_gateway_visa');
+
+        $callback = $integration->provide_recurring_charge_callback(
+            null,
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $this->assertIsCallable($callback);
+    }
+
+    public function test_recurring_callback_is_provided_for_dynamic_paynl_gateway_ids(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $renewal_order
+            ->method('get_payment_method')
+            ->willReturn('pay_gateway_amex');
 
         $callback = $integration->provide_recurring_charge_callback(
             null,
@@ -274,6 +320,84 @@ final class PayNLGatewayIntegrationTest extends TestCase
 
         $this->assertTrue($result['paid']);
         $this->assertNotEmpty($GLOBALS['wsz_paynl_test_http_requests']);
+    }
+
+    public function test_recurring_charge_requires_documented_api_token_credentials(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'service_id' => 'SL-1234-5678',
+            'service_secret' => 'sales-location-secret',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $renewal_order
+            ->method('get_payment_method')
+            ->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $this->assertFalse($result['paid']);
+        $this->assertStringContainsString('credentials', $result['message']);
+        $this->assertSame(array(), $GLOBALS['wsz_paynl_test_http_requests']);
+    }
+
+    public function test_recurring_charge_rejects_non_positive_amount_before_authorize_request(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $result = $integration->charge_recurring_payment(
+            'VY-9212-9171-2390',
+            0.0,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $this->assertFalse($result['paid']);
+        $this->assertSame('PAY.nl recurring amount must be a positive integer in cents.', $result['message'] ?? '');
+        $this->assertSame(array(), $GLOBALS['wsz_paynl_test_http_requests']);
+    }
+
+    public function test_recurring_charge_rejects_invalid_recurring_id_before_authorize_request(): void
+    {
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
+            'token_code' => 'AT-1234-5678',
+            'api_token' => 'test-api-token',
+            'service_id' => 'SL-1234-5678',
+        );
+
+        $integration = new WSZ_PayNL_Gateway_Integration();
+        $renewal_order = $this->createMock(WC_Order::class);
+        $subscription = $this->createMock(WC_Order::class);
+
+        $result = $integration->charge_recurring_payment(
+            'not-a-paynl-token',
+            12.34,
+            'EUR',
+            $renewal_order,
+            $subscription
+        );
+
+        $this->assertFalse($result['paid']);
+        $this->assertSame('PAY.nl recurring_id must use the documented VY-XXXX-XXXX-XXXX token format.', $result['message'] ?? '');
+        $this->assertSame(array(), $GLOBALS['wsz_paynl_test_http_requests']);
     }
 
     public function test_recurring_charge_prefers_api_token_for_authorize_request(): void
@@ -375,7 +499,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('EUR', $payload['transaction']['currency']);
         $this->assertSame('203.0.113.42', $payload['transaction']['ipAddress']);
         $this->assertSame('EN', $payload['transaction']['language']);
-        $this->assertSame(1, $payload['options']['tokenization']);
+        $this->assertArrayNotHasKey('options', $payload);
         $this->assertSame('token', $payload['payment']['method']);
         $this->assertSame('VY-9212-9171-2390', $payload['payment']['token']['id']);
         $this->assertSame('subscription_10473', $payload['stats']['extra1']);
@@ -435,7 +559,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
     }
 
-    public function test_paynl_token_exchange_payload_accepts_nested_token_alias(): void
+    public function test_paynl_token_exchange_payload_ignores_undocumented_nested_token_alias(): void
     {
         $integration = new WSZ_PayNL_Gateway_Integration();
         $payload = WSZ_PayNL_Token_Support::normalize_payload(
@@ -449,7 +573,21 @@ final class PayNLGatewayIntegrationTest extends TestCase
             )
         );
 
-        $this->assertTrue($integration->is_token_exchange_payload($payload));
+        $this->assertFalse($integration->is_token_exchange_payload($payload));
+    }
+
+    public function test_paynl_token_exchange_payload_ignores_generic_token_alias(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $this->assertFalse(
+            $integration->is_token_exchange_payload(
+                array(
+                    'action' => 'token',
+                    'token' => 'VY-9212-9171-2390',
+                )
+            )
+        );
     }
 
     public function test_paynl_token_exchange_does_not_treat_recurring_token_hash_as_recurring_id(): void
@@ -461,6 +599,20 @@ final class PayNLGatewayIntegrationTest extends TestCase
                 array(
                     'action' => 'token',
                     'recurring_token' => 'c1747bf4d38cd6af76ca0d2ffe373987b666305e27dd8b5501a5facf90a99bffe',
+                )
+            )
+        );
+    }
+
+    public function test_paynl_token_exchange_rejects_invalid_recurring_id_shape(): void
+    {
+        $integration = new WSZ_PayNL_Gateway_Integration();
+
+        $this->assertFalse(
+            $integration->is_token_exchange_payload(
+                array(
+                    'action' => 'token',
+                    'recurring_id' => 'not-a-vy-token',
                 )
             )
         );
@@ -633,7 +785,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('EX-2345-2238-9812', $transactions[0]['transaction_id'] ?? '');
     }
 
-    public function test_paynl_recurring_charge_reads_transaction_id_alias_from_response(): void
+    public function test_paynl_recurring_charge_rejects_undocumented_authorize_response_aliases(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
             'token_code' => 'AT-1234-5678',
@@ -673,8 +825,8 @@ final class PayNLGatewayIntegrationTest extends TestCase
             $subscription
         );
 
-        $this->assertTrue($result['paid']);
-        $this->assertSame('PAY-ID-ALIAS-1', $result['transaction_id'] ?? '');
+        $this->assertFalse($result['paid']);
+        $this->assertSame('PAY.nl recurring charge response did not include the documented request result.', $result['message'] ?? '');
         $this->assertSame(array(), WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10));
     }
 
@@ -779,7 +931,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         );
         $GLOBALS['wsz_paynl_test_http_response'] = array(
             'response' => array('code' => 200),
-            'body' => '{"state":"paid","links":{"status":"https:\/\/example.test\/status"}}',
+            'body' => '{"request":{"result":1,"errorId":"","errorTag":"","errorMessage":""},"payment":{"bankCode":"00","bankMessage":"Approved"},"transaction":{"state":"100","stateName":"PAID"},"links":{"status":"https:\/\/example.test\/status"}}',
         );
 
         $integration = new WSZ_PayNL_Gateway_Integration();
@@ -806,11 +958,12 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('PAY.nl recurring charge approved without a transaction identifier.', $logs[0]['message'] ?? '');
         $this->assertSame('10488', $logs[0]['context']['renewal_order_id'] ?? '');
         $this->assertSame('10487', $logs[0]['context']['subscription_id'] ?? '');
-        $this->assertSame('state', $logs[0]['context']['response_keys'][0] ?? '');
-        $this->assertSame('links', $logs[0]['context']['response_keys'][1] ?? '');
+        $this->assertSame('request', $logs[0]['context']['response_keys'][0] ?? '');
+        $this->assertSame('payment', $logs[0]['context']['response_keys'][1] ?? '');
+        $this->assertSame('transaction', $logs[0]['context']['response_keys'][2] ?? '');
     }
 
-    public function test_paynl_recurring_charge_empty_transaction_warning_includes_request_context(): void
+    public function test_paynl_recurring_charge_rejects_response_without_approved_transaction_status(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
             'token_code' => 'AT-1234-5678',
@@ -841,8 +994,9 @@ final class PayNLGatewayIntegrationTest extends TestCase
 
         $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
 
-        $this->assertTrue($result['paid']);
-        $this->assertSame('', $result['transaction_id'] ?? '');
+        $this->assertFalse($result['paid']);
+        $this->assertSame('PAY.nl recurring charge response did not include an approved transaction status.', $result['message'] ?? '');
+        $this->assertSame('PAY.nl recurring charge was not approved.', $logs[0]['message'] ?? '');
         $this->assertSame('1', $logs[0]['context']['request_result'] ?? '');
         $this->assertSame('request', $logs[0]['context']['response_keys'][0] ?? '');
     }

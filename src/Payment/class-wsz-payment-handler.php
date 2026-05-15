@@ -826,6 +826,10 @@ class WSZ_Payment_Handler
             }
         }
 
+        if ($this->are_paynl_tokens_enabled() && $this->is_paynl_gateway_id($gateway_id)) {
+            return true;
+        }
+
         return false;
     }
 
@@ -1126,22 +1130,8 @@ class WSZ_Payment_Handler
             return false;
         }
 
-        $gateway_ids = array(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
-
-        if (function_exists('apply_filters')) {
-            $filtered = apply_filters('wsz_subs_paynl_gateway_ids', $gateway_ids);
-            if (is_array($filtered)) {
-                $gateway_ids = $filtered;
-            }
-        }
-
-        foreach ($gateway_ids as $paynl_gateway_id) {
-            if ($gateway_id === sanitize_key((string) $paynl_gateway_id)) {
-                return true;
-            }
-        }
-
-        return false;
+        return is_callable(array('WSZ_PayNL_Gateway_Integration', 'is_supported_gateway_id'))
+            && WSZ_PayNL_Gateway_Integration::is_supported_gateway_id($gateway_id);
     }
 
     private function are_paynl_tokens_enabled(): bool

@@ -8,17 +8,9 @@ CURRENCY="${PAYNL_CURRENCY:-EUR}"
 DESCRIPTION="${PAYNL_DESCRIPTION:-WSZ recurring renewal test}"
 REFERENCE="${PAYNL_REFERENCE:-WSZ-RTEST-$(date -u +%Y%m%d%H%M%S)}"
 EXCHANGE_URL="${PAYNL_EXCHANGE_URL:-https://pay.nl/exchange}"
+IP_ADDRESS="${PAYNL_IP_ADDRESS:-127.0.0.1}"
 LANGUAGE="${PAYNL_LANGUAGE:-EN}"
 EXPIRE_DATE="${PAYNL_EXPIRE_DATE:-$(( $(date -u +%s) + 3600 ))}"
-CUSTOMER_REFERENCE="${PAYNL_CUSTOMER_REFERENCE:-WSZ recurring test customer}"
-CUSTOMER_FIRST_NAME="${PAYNL_CUSTOMER_FIRST_NAME:-Woo}"
-CUSTOMER_LAST_NAME="${PAYNL_CUSTOMER_LAST_NAME:-Subzero}"
-CUSTOMER_EMAIL="${PAYNL_CUSTOMER_EMAIL:-paynl-recurring-test@example.invalid}"
-PRODUCT_ID="${PAYNL_PRODUCT_ID:-WSZ_RENEWAL_TEST}"
-PRODUCT_DESCRIPTION="${PAYNL_PRODUCT_DESCRIPTION:-Woo Subs-Zero renewal test}"
-PRODUCT_VAT_PERCENTAGE="${PAYNL_PRODUCT_VAT_PERCENTAGE:-0}"
-INVOICE_DATE="${PAYNL_INVOICE_DATE:-$(date -u +%Y-%m-%d)}"
-DELIVERY_DATE="${PAYNL_DELIVERY_DATE:-$INVOICE_DATE}"
 SEND_REQUEST=0
 RESPONSE_FILE=""
 
@@ -48,17 +40,9 @@ Optional environment:
   PAYNL_REFERENCE         Merchant reference. Default: WSZ-RTEST-{UTC timestamp}
   PAYNL_DESCRIPTION       Transaction description
   PAYNL_EXCHANGE_URL      Exchange endpoint included in the transaction payload
+  PAYNL_IP_ADDRESS        Customer/server IP address for transaction.ipAddress
   PAYNL_LANGUAGE          ISO-639 language code. Default: EN
   PAYNL_EXPIRE_DATE       Unix timestamp. Default: now + 1 hour
-  PAYNL_CUSTOMER_REFERENCE
-  PAYNL_CUSTOMER_FIRST_NAME
-  PAYNL_CUSTOMER_LAST_NAME
-  PAYNL_CUSTOMER_EMAIL
-  PAYNL_PRODUCT_ID
-  PAYNL_PRODUCT_DESCRIPTION
-  PAYNL_PRODUCT_VAT_PERCENTAGE
-  PAYNL_INVOICE_DATE      YYYY-MM-DD. Default: today in UTC
-  PAYNL_DELIVERY_DATE     YYYY-MM-DD. Default: invoice date
   PAYNL_AUTHORIZE_ENDPOINT
   PAYNL_TRANSACTION_INFO_ENDPOINT
 
@@ -99,6 +83,16 @@ require_env PAYNL_API_TOKEN
 require_env PAYNL_SERVICE_ID
 require_env PAYNL_RECURRING_ID
 
+if [[ ! "$PAYNL_RECURRING_ID" =~ ^VY-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$ ]]; then
+  printf 'PAYNL_RECURRING_ID must use the documented VY-XXXX-XXXX-XXXX token format.\n' >&2
+  exit 2
+fi
+
+if [[ ! "$AMOUNT_CENTS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'PAYNL_AMOUNT_CENTS must be a positive integer in cents.\n' >&2
+  exit 2
+fi
+
 if ! command -v php >/dev/null 2>&1; then
   printf 'Missing required command: php\n' >&2
   exit 2
@@ -116,17 +110,9 @@ PAYLOAD="$(PAYNL_SERVICE_ID="$PAYNL_SERVICE_ID" \
   PAYNL_DESCRIPTION="$DESCRIPTION" \
   PAYNL_REFERENCE="$REFERENCE" \
   PAYNL_EXCHANGE_URL="$EXCHANGE_URL" \
+  PAYNL_IP_ADDRESS="$IP_ADDRESS" \
   PAYNL_LANGUAGE="$LANGUAGE" \
   PAYNL_EXPIRE_DATE="$EXPIRE_DATE" \
-  PAYNL_CUSTOMER_REFERENCE="$CUSTOMER_REFERENCE" \
-  PAYNL_CUSTOMER_FIRST_NAME="$CUSTOMER_FIRST_NAME" \
-  PAYNL_CUSTOMER_LAST_NAME="$CUSTOMER_LAST_NAME" \
-  PAYNL_CUSTOMER_EMAIL="$CUSTOMER_EMAIL" \
-  PAYNL_PRODUCT_ID="$PRODUCT_ID" \
-  PAYNL_PRODUCT_DESCRIPTION="$PRODUCT_DESCRIPTION" \
-  PAYNL_PRODUCT_VAT_PERCENTAGE="$PRODUCT_VAT_PERCENTAGE" \
-  PAYNL_INVOICE_DATE="$INVOICE_DATE" \
-  PAYNL_DELIVERY_DATE="$DELIVERY_DATE" \
   php -r '
 $payload = [
     "transaction" => [
@@ -136,12 +122,10 @@ $payload = [
         "reference" => getenv("PAYNL_REFERENCE"),
         "amount" => (int) getenv("PAYNL_AMOUNT_CENTS"),
         "currency" => getenv("PAYNL_CURRENCY"),
+        "ipAddress" => getenv("PAYNL_IP_ADDRESS"),
         "language" => getenv("PAYNL_LANGUAGE"),
         "exchangeUrl" => getenv("PAYNL_EXCHANGE_URL"),
         "expireDate" => (int) getenv("PAYNL_EXPIRE_DATE"),
-    ],
-    "options" => [
-        "tokenization" => 1,
     ],
     "payment" => [
         "method" => "token",
@@ -154,26 +138,6 @@ $payload = [
         "extra2" => "renewal_test",
         "extra3" => getenv("PAYNL_REFERENCE"),
         "object" => "Woo Subs-Zero curl test",
-    ],
-    "customer" => [
-        "reference" => getenv("PAYNL_CUSTOMER_REFERENCE"),
-        "firstName" => getenv("PAYNL_CUSTOMER_FIRST_NAME"),
-        "lastName" => getenv("PAYNL_CUSTOMER_LAST_NAME"),
-        "emailAddress" => getenv("PAYNL_CUSTOMER_EMAIL"),
-    ],
-    "order" => [
-        "products" => [
-            [
-                "type" => "ARTICLE",
-                "id" => getenv("PAYNL_PRODUCT_ID"),
-                "description" => getenv("PAYNL_PRODUCT_DESCRIPTION"),
-                "amount" => (int) getenv("PAYNL_AMOUNT_CENTS"),
-                "quantity" => 1,
-                "vatPercentage" => (float) getenv("PAYNL_PRODUCT_VAT_PERCENTAGE"),
-            ],
-        ],
-        "deliveryDate" => getenv("PAYNL_DELIVERY_DATE"),
-        "invoiceDate" => getenv("PAYNL_INVOICE_DATE"),
     ],
 ];
 
@@ -220,31 +184,10 @@ if (!is_array($decoded)) {
     exit;
 }
 
-$paths = [
-    ["transactionId"],
-    ["transaction_id"],
-    ["transaction", "transactionId"],
-    ["transaction", "transaction_id"],
-    ["transaction", "id"],
-    ["paymentSessionId"],
-    ["payment_session_id"],
-    ["orderId"],
-    ["order_id"],
-    ["id"],
-];
-
-foreach ($paths as $path) {
-    $value = $decoded;
-    foreach ($path as $segment) {
-        if (!is_array($value) || !array_key_exists($segment, $value)) {
-            continue 2;
-        }
-        $value = $value[$segment];
-    }
-    if (is_scalar($value) && "" !== (string) $value) {
-        echo (string) $value;
-        exit;
-    }
+$value = $decoded["transaction"]["transactionId"] ?? "";
+if (is_scalar($value) && "" !== (string) $value) {
+    echo (string) $value;
+    exit;
 }
 ' "$RESPONSE_FILE")"
 

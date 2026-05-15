@@ -187,6 +187,49 @@ final class TokenizedGatewayDispatchTest extends TestCase
         $payment_handler->dispatch_scheduled_payment($subscription, $renewal_order, 12.34);
     }
 
+    public function test_dispatch_scheduled_payment_routes_dynamic_paynl_gateway_when_tokens_enabled(): void
+    {
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = array(
+            'enable_paynl_tokens' => 'yes',
+        );
+
+        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $subscription_manager
+            ->method('is_manual_renewal')
+            ->willReturn(false);
+
+        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
+            ->setConstructorArgs(array($subscription_manager))
+            ->onlyMethods(array('is_gateway_registered'))
+            ->getMock();
+
+        $payment_handler
+            ->expects($this->never())
+            ->method('is_gateway_registered');
+
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription
+            ->method('get_payment_method')
+            ->willReturn('pay_gateway_amex');
+
+        $renewal_order = $this->createMock(WC_Order::class);
+
+        $tokenized_gateway = $this->getMockBuilder(WSZ_Tokenized_Gateway::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(array('process_scheduled_payment'))
+            ->getMock();
+        $tokenized_gateway
+            ->expects($this->once())
+            ->method('process_scheduled_payment')
+            ->with(12.34, $renewal_order);
+
+        $property = new ReflectionProperty(WSZ_Payment_Handler::class, 'tokenized_gateway');
+        $property->setAccessible(true);
+        $property->setValue($payment_handler, $tokenized_gateway);
+
+        $payment_handler->dispatch_scheduled_payment($subscription, $renewal_order, 12.34);
+    }
+
     public function test_tokenized_gateway_catches_payment_completion_format_errors(): void
     {
         add_filter(
