@@ -61,6 +61,17 @@ final class EarlyRenewalManagerTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_fully_paid_active_subscription_cannot_be_renewed_early(): void
+    {
+        $GLOBALS['wsz_subs_test_options'] = array('enable_early_renewal' => 'yes');
+        $sub = new EarlyRenewalDummyOrder(10, 'active');
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('has_completed_all_payments')->willReturn(true);
+        $manager->method('is_customer_subscription_owner')->willReturn(true);
+        $manager->method('get_next_payment_timestamp')->willReturn(time() + DAY_IN_SECONDS);
+        $this->assertFalse((new WSZ_Early_Renewal_Manager($manager))->filter_can_user_renew_early(true, $sub, 5, ''));
+    }
+
     public function test_filter_can_user_renew_early_rejects_when_feature_disabled(): void
     {
         $GLOBALS['wsz_subs_test_options'] = array('enable_early_renewal' => 'no');

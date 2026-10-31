@@ -877,7 +877,9 @@ class WSZ_Admin_Subscriptions
                         continue;
                     }
 
-                    $rows[$meta_key] = $this->stringify_meta_value($value);
+                    $rows[$meta_key] = '_wsz_paynl_sepa_authorization' === $meta_key
+                        ? __('Encrypted SEPA authorization stored.', 'woo-subzero')
+                        : $this->stringify_meta_value($value);
                 }
             }
         }

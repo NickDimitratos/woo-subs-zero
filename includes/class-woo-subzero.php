@@ -79,6 +79,9 @@ final class WSZ_Woo_Subzero
                     'enable_test_deferred_start' => 'yes',
                     'test_deferred_start_minutes' => 1,
                     'enable_test_cycle_notifications' => 'no',
+                    'enable_paynl_tokens' => 'no',
+                    'enable_paynl_sepa' => 'no',
+                    'paynl_sepa_notice_days' => 14,
                     'enable_stripe_tokens' => 'no',
                     'enable_mollie_tokens' => 'no',
                     'enable_role_transitions' => 'no',
@@ -155,10 +158,13 @@ final class WSZ_Woo_Subzero
         $this->checkout_handler->init();
         $this->webhook_handler->init();
         $this->customer_actions_manager->init();
+        $customer_subscriptions = new WSZ_Customer_Subscriptions($this->subscription_manager, $this->renewal_engine);
+        $customer_subscriptions->init();
 
         if (is_admin()) {
             $this->admin_settings->init();
             $this->admin_subscriptions->init();
+            (new WSZ_Admin_Unpaid_Renewals($this->subscription_manager, $customer_subscriptions))->init();
         }
 
         do_action('wsz_subs_bootstrapped', $this);
@@ -188,6 +194,9 @@ final class WSZ_Woo_Subzero
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-synchronization-manager.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-early-renewal-manager.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-customer-actions-manager.php';
+        require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-customer-subscriptions.php';
+        require_once WSZ_WOO_SUBZERO_PATH . 'includes/admin/class-wsz-admin-unpaid-renewals.php';
+        require_once WSZ_WOO_SUBZERO_PATH . 'src/Email/class-wsz-renewal-email-template.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-checkout-handler.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-paynl-token-support.php';
         require_once WSZ_WOO_SUBZERO_PATH . 'includes/class-wsz-webhook-handler.php';

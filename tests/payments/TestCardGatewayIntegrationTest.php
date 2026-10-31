@@ -2,6 +2,12 @@
 
 use PHPUnit\Framework\TestCase;
 
+if (!function_exists('get_option')) {
+    function get_option($name, $default = false) {
+        return $GLOBALS['wsz_admin_test_options'][$name] ?? $default;
+    }
+}
+
 if (!function_exists('add_action')) {
     function add_action($hook_name, $callback, $priority = 10, $accepted_args = 1)
     {
@@ -89,6 +95,18 @@ final class TestCardGatewayIntegrationTest extends TestCase
         unset($GLOBALS['wsz_subs_test_card_transactions']);
 
         parent::tearDown();
+    }
+
+    public function test_enabled_test_gateway_is_discoverable_without_becoming_a_card_token_adapter(): void
+    {
+        $GLOBALS['wsz_test_filters'] = array();
+        $GLOBALS['wsz_admin_test_options']['woocommerce_wsz_test_card_settings'] = array('enabled' => 'yes');
+        (new WSZ_Test_Card_Gateway_Integration())->init();
+        $this->assertContains('wsz_test_card', apply_filters('wsz_subs_automatic_renewal_gateway_ids', array()));
+        $this->assertNotContains('wsz_test_card', apply_filters('wsz_subs_tokenized_gateway_ids', array()));
+        $GLOBALS['wsz_admin_test_options']['woocommerce_wsz_test_card_settings']['enabled'] = 'no';
+        $this->assertNotContains('wsz_test_card', apply_filters('wsz_subs_automatic_renewal_gateway_ids', array()));
+        unset($GLOBALS['wsz_test_filters'], $GLOBALS['wsz_admin_test_options']);
     }
 
     public function test_register_gateway_adds_test_card_gateway_class(): void

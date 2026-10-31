@@ -569,6 +569,26 @@ final class AdminSubscriptionsTest extends TestCase
         $this->assertStringContainsString('Subscription profile values only (meta keys)', $output);
     }
 
+    public function test_subscription_meta_box_does_not_dump_encrypted_bank_authorization(): void
+    {
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(44);
+        $subscription->method('get_status')->willReturn('active');
+        $subscription->method('get_meta_data')->willReturn(array(
+            new class {
+                public function get_data() { return array('key' => '_wsz_paynl_sepa_authorization', 'value' => 'MOCK-ENCRYPTED-BANK-AUTHORIZATION-BLOB'); }
+            },
+        ));
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->willReturn($subscription);
+        $post = new WP_Post(); $post->ID = 44;
+        ob_start();
+        (new WSZ_Admin_Subscriptions($manager))->render_subscription_meta_keys_meta_box($post);
+        $output = (string) ob_get_clean();
+        $this->assertStringNotContainsString('MOCK-ENCRYPTED-BANK-AUTHORIZATION-BLOB', $output);
+        $this->assertStringContainsString('Encrypted SEPA authorization stored.', $output);
+    }
+
     public function test_render_upcoming_renewals_meta_box_auto_recovers_due_active_subscription(): void
     {
         $subscription = $this->createMock(WC_Order::class);

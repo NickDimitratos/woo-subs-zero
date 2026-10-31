@@ -1,0 +1,3 @@
+<?php
+define('ABSPATH',__DIR__.'/');function __($s,$d=null){return $s;}class WSZ_Subscription_Manager{}class WSZ_Customer_Subscriptions{} require __DIR__.'/../../includes/admin/class-wsz-admin-unpaid-renewals.php';
+$controller=new WSZ_Admin_Unpaid_Renewals(new WSZ_Subscription_Manager(),new WSZ_Customer_Subscriptions());$legacy=$controller->legacy_query(['meta_query'=>[]],['wsz_unpaid_renewals'=>true]);$hpos=$controller->hpos_query(['wsz_unpaid_renewals'=>true]);$unchanged=$controller->legacy_query(['meta_query'=>[]],[]);echo json_encode(['legacy'=>$legacy,'hpos'=>$hpos,'unchanged'=>$unchanged]).PHP_EOL;

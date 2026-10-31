@@ -58,7 +58,32 @@ if (!function_exists('add_filter')) {
 if (!function_exists('do_action')) {
     function do_action($hook_name)
     {
+        if (!empty($GLOBALS['wsz_test_execute_actions'])) {
+            $args = array_slice(func_get_args(), 1);
+            $actions = $GLOBALS['wsz_test_actions'][(string) $hook_name] ?? array();
+            ksort($actions);
+            foreach ($actions as $callbacks) {
+                foreach ($callbacks as $action) {
+                    call_user_func_array($action['callback'], array_slice($args, 0, $action['accepted_args']));
+                }
+            }
+        }
+
         return null;
+    }
+}
+
+if (!function_exists('add_action')) {
+    function add_action($hook_name, $callback, $priority = 10, $accepted_args = 1)
+    {
+        if (!empty($GLOBALS['wsz_test_execute_actions'])) {
+            $GLOBALS['wsz_test_actions'][(string) $hook_name][(int) $priority][] = array(
+                'callback' => $callback,
+                'accepted_args' => (int) $accepted_args,
+            );
+        }
+
+        return true;
     }
 }
 
@@ -95,6 +120,13 @@ if (!function_exists('sanitize_text_field')) {
     function sanitize_text_field($value)
     {
         return trim((string) $value);
+    }
+}
+
+if (!function_exists('esc_url_raw')) {
+    function esc_url_raw($url)
+    {
+        return filter_var($url, FILTER_VALIDATE_URL) ? $url : '';
     }
 }
 

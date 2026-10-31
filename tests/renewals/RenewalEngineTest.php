@@ -6,6 +6,12 @@ if (!defined('ABSPATH')) {
     define('ABSPATH', __DIR__ . '/');
 }
 
+if (!function_exists('get_option')) {
+    function get_option($name, $default = false) {
+        return 'wsz_subs_options' === $name ? ($GLOBALS['wsz_subs_test_options'] ?? $default) : ($GLOBALS['wsz_admin_test_options'][$name] ?? $default);
+    }
+}
+
 if (!function_exists('as_schedule_single_action')) {
     function as_schedule_single_action($timestamp, $hook, $args = array(), $group = '', $unique = false)
     {
@@ -564,107 +570,150 @@ final class RenewalEngineTest extends TestCase
         $engine->process_renewal(914, '');
     }
 
-    public function test_paid_renewal_expires_subscription_when_final_required_payment_completes(): void
+    /** @dataProvider final_payment_paths */
+    public function test_final_payment_stops_billing_but_preserves_the_service_end(string $path, int $end_offset): void
     {
-        $next_payment = current_time('timestamp', true) + 60;
+        $end = time() + $end_offset;
+        $next = time() - 60;
+        $sub = $this->create_context_order(915, array(), array('status' => 'active', 'total' => 10, 'meta' => array(
+            '_wsz_completed_payments' => 3, '_wsz_total_payments' => 4,
+            '_wsz_end_date' => gmdate('Y-m-d H:i:s', $end),
+            '_wsz_next_payment' => gmdate('Y-m-d H:i:s', $next),
+            '_schedule_next_payment' => gmdate('Y-m-d H:i:s', $next),
+        )));
+        $order = $this->create_context_order(916, array(), array('status' => 'processing', 'total' => 10,
+            'meta' => array('_wsz_subscription_id' => 915)));
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $order;
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)
+            ->onlyMethods(array('get_subscription', 'acquire_lock', 'release_lock'))->getMock();
+        $manager->method('get_subscription')->willReturn($sub);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects('normal' === $path ? $this->once() : $this->never())->method('dispatch_scheduled_payment');
+        $engine = new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class));
+        if ('normal' === $path) {
+            $engine->process_renewal(915, 'final-key');
+        } elseif ('async' === $path) {
+            $engine->handle_async_payment_complete($sub, $order);
+            $engine->handle_async_payment_complete($sub, $order);
+        } else {
+            $engine->handle_retry_payment_complete($sub, $order, 2);
+            $engine->handle_retry_payment_complete($sub, $order, 2);
+        }
+        $this->assertSame(4, $manager->get_completed_payments($sub));
+        $this->assertSame($end_offset > 0 ? 'active' : 'expired', $sub->get_status());
+        $this->assertSame($end, $manager->get_end_timestamp($sub), 'Final payment must not rebase the service end.');
+        $this->assertSame(0, $manager->get_next_payment_timestamp($sub), 'Fully paid service has no next charge.');
+        $this->assertSame('', $sub->get_meta('_schedule_next_payment'));
+        $this->assertSame('yes', $order->get_meta('_wsz_cycle_completed'), 'Replay must not complete a cycle twice.');
+        $renewals = array_filter($GLOBALS['wsz_test_scheduled_actions'], static fn ($a) => 'wsz_subs_process_renewal' === $a['hook']);
+        $this->assertSame(array(), $renewals);
+        $expirations = array_values(array_filter($GLOBALS['wsz_test_scheduled_actions'], static fn ($a) => 'wsz_subs_expire_subscription' === $a['hook']));
+        if ($end_offset > 0) {
+            $this->assertCount(1, $expirations);
+            $this->assertSame($end, $expirations[0]['timestamp']);
+            $manager->process_expiration(915);
+            $this->assertSame('active', $sub->get_status(), 'An early expiration job must not remove prepaid service.');
+        }
+    }
 
-        $subscription = $this->createMock(WC_Order::class);
-        $subscription->method('get_id')->willReturn(915);
-        $subscription->method('get_status')->willReturn('active');
-        $subscription
-            ->expects($this->exactly(2))
-            ->method('update_meta_data')
-            ->with(
-                $this->logicalOr(
-                    $this->equalTo('_wsz_next_schedule_key'),
-                    $this->equalTo('_wsz_last_processed_schedule_key')
-                ),
-                $this->logicalOr(
-                    $this->equalTo(''),
-                    $this->equalTo('final-key')
-                )
-            );
-        $subscription
-            ->expects($this->exactly(2))
-            ->method('save');
+    public static function final_payment_paths(): array
+    {
+        $cases = array();
+        foreach (array('normal', 'async', 'retry') as $path) {
+            foreach (array('future' => 30 * DAY_IN_SECONDS, 'due' => 0, 'overdue' => -60) as $boundary => $offset) {
+                $cases[$path . '-' . $boundary] = array($path, $offset);
+            }
+        }
+        return $cases;
+    }
 
-        $renewal_order = $this->createMock(WC_Order::class);
-        $renewal_order
-            ->expects($this->exactly(2))
-            ->method('get_total')
-            ->willReturn(10.0);
-        $renewal_order
-            ->expects($this->once())
-            ->method('is_paid')
-            ->willReturn(true);
+    public function test_final_payment_cleanup_covers_later_queue_pages_and_preserves_other_subscriptions(): void
+    {
+        $process = proc_open(array(PHP_BINARY, dirname(__DIR__) . '/fixtures/finite-term-queue-cleanup.php'),
+            array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+        $output = stream_get_contents($pipes[1]);
+        $errors = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]);
+        $this->assertSame(0, proc_close($process), $errors);
+        $result = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame(0, $result['own_collections']);
+        $this->assertSame(220, $result['foreign_collections']);
+        $this->assertTrue($result['expiry_preserved']);
+        $this->assertTrue($result['bounded_pages']);
+    }
 
-        $GLOBALS['wsz_test_wcs_renewal_order'] = $renewal_order;
+    /** @dataProvider missing_end_profiles */
+    public function test_final_callback_recovers_a_missing_end_from_the_existing_term(string $period, int $interval): void
+    {
+        $start = strtotime('-1 ' . $period);
+        $sub = $this->create_context_order(915, array(), array('status' => 'active', 'meta' => array(
+            '_wsz_completed_payments' => 3, '_wsz_total_payments' => 4, '_wsz_subscription_length' => 4,
+            '_wsz_start_date' => gmdate('Y-m-d H:i:s', $start),
+            '_wsz_billing_period' => $period, '_wsz_billing_interval' => $interval,
+        )));
+        $order = $this->create_context_order(916, array(), array('status' => 'processing', 'meta' => array('_wsz_subscription_id' => 915)));
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('acquire_lock', 'release_lock'))->getMock();
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->handle_async_payment_complete($sub, $order);
+        $this->assertSame('active', $sub->get_status());
+        $this->assertSame(strtotime('+' . (4 * $interval) . ' ' . $period, $start), $manager->get_end_timestamp($sub));
+        $this->assertSame(0, $manager->get_next_payment_timestamp($sub));
+    }
 
-        $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
-        $subscription_manager
-            ->expects($this->once())
-            ->method('get_subscription')
-            ->with(915)
-            ->willReturn($subscription);
-        $subscription_manager
-            ->expects($this->once())
-            ->method('get_next_payment_timestamp')
-            ->with($subscription)
-            ->willReturn($next_payment);
-        $subscription_manager
-            ->expects($this->once())
-            ->method('get_total_payments')
-            ->with($subscription)
-            ->willReturn(4);
-        $subscription_manager
-            ->expects($this->exactly(2))
-            ->method('has_completed_all_payments')
-            ->with($subscription)
-            ->willReturnOnConsecutiveCalls(false, true);
-        $subscription_manager
-            ->expects($this->once())
-            ->method('acquire_lock')
-            ->with('renewal', 915, 300)
-            ->willReturn(true);
-        $subscription_manager
-            ->expects($this->once())
-            ->method('is_manual_renewal')
-            ->with($subscription)
-            ->willReturn(false);
-        $subscription_manager
-            ->expects($this->once())
-            ->method('increment_completed_payments')
-            ->with($subscription, 1)
-            ->willReturn(4);
-        $subscription_manager
-            ->expects($this->once())
-            ->method('transition_status')
-            ->with($subscription, 'expired', $this->stringContains('Subscription term completed.'))
-            ->willReturn(true);
-        $subscription_manager
-            ->expects($this->never())
-            ->method('calculate_next_payment_from_timestamp');
-        $subscription_manager
-            ->expects($this->once())
-            ->method('release_lock')
-            ->with('renewal', 915);
+    public static function missing_end_profiles(): array
+    {
+        return array('monthly' => array('month', 1), 'annual' => array('year', 1), 'fortnightly' => array('week', 2));
+    }
 
-        $payment_handler = $this->getMockBuilder(WSZ_Payment_Handler::class)
-            ->disableOriginalConstructor()
-            ->getMock();
-        $payment_handler
-            ->expects($this->once())
-            ->method('dispatch_scheduled_payment')
-            ->with($subscription, $renewal_order, 10.0);
+    /** @dataProvider terminal_completion_states */
+    public function test_late_final_completion_preserves_terminal_and_pending_cancellation(string $path, string $status): void
+    {
+        $sub = $this->create_context_order(915, array(), array('status' => $status, 'meta' => array('_wsz_completed_payments' => 3, '_wsz_total_payments' => 4)));
+        $order = $this->create_context_order(916, array(), array('status' => 'processing', 'meta' => array('_wsz_subscription_id' => 915)));
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('acquire_lock', 'release_lock'))->getMock();
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $engine = new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class));
+        if ('retry' === $path) { $engine->handle_retry_payment_complete($sub, $order, 2); }
+        else { $engine->handle_async_payment_complete($sub, $order); }
+        $this->assertSame($status, $sub->get_status());
+        $this->assertSame(4, $manager->get_completed_payments($sub));
+        $this->assertSame(array(), $GLOBALS['wsz_test_scheduled_actions']);
+    }
 
-        $retry_manager = $this->createMock(WSZ_Retry_Manager::class);
-        $retry_manager
-            ->expects($this->once())
-            ->method('cancel_pending_retries')
-            ->with($renewal_order);
+    public static function terminal_completion_states(): array
+    {
+        $cases = array();
+        foreach (array('async', 'retry') as $path) {
+            foreach (array('cancelled', 'expired', 'pending-cancel') as $status) {
+                $cases[$path . '-' . $status] = array($path, $status);
+            }
+        }
+        return $cases;
+    }
 
-        $engine = new WSZ_Renewal_Engine($subscription_manager, $payment_handler, $retry_manager);
-        $engine->process_renewal(915, 'final-key');
+    public function test_fully_paid_initial_term_has_only_an_expiration_and_no_next_charge(): void
+    {
+        $end = time() + DAY_IN_SECONDS;
+        $sub = $this->create_context_order(915, array(), array('status' => 'active', 'meta' => array(
+            '_wsz_completed_payments' => 1, '_wsz_total_payments' => 1,
+            '_wsz_end_date' => gmdate('Y-m-d H:i:s', $end),
+        )));
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('get_subscription'))->getMock();
+        $manager->method('get_subscription')->willReturn($sub);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->never())->method('dispatch_scheduled_payment');
+        $engine = new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class));
+        $engine->schedule_first_renewal($sub);
+        $engine->schedule_if_missing($sub);
+        $engine->process_renewal(915, 'stale-job');
+        $this->assertSame('active', $sub->get_status());
+        $this->assertSame(0, $manager->get_next_payment_timestamp($sub));
+        $this->assertCount(1, $GLOBALS['wsz_test_scheduled_actions']);
+        $this->assertSame('wsz_subs_expire_subscription', $GLOBALS['wsz_test_scheduled_actions'][0]['hook']);
+        $this->assertSame($end, $GLOBALS['wsz_test_scheduled_actions'][0]['timestamp']);
     }
 
     public function test_process_renewal_runs_overdue_cycle_before_expiration_boundary(): void
@@ -691,19 +740,20 @@ final class RenewalEngineTest extends TestCase
             ->expects($this->never())
             ->method('update_status');
         $renewal_order
-            ->expects($this->never())
-            ->method('is_paid');
+            ->expects($this->once())
+            ->method('is_paid')
+            ->willReturn(false);
 
         $GLOBALS['wsz_test_wcs_renewal_order'] = $renewal_order;
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->exactly(3))
             ->method('get_subscription')
             ->with(912)
             ->willReturn($subscription);
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->exactly(2))
             ->method('get_next_payment_timestamp')
             ->with($subscription)
             ->willReturn($next_payment);
@@ -1070,6 +1120,243 @@ final class RenewalEngineTest extends TestCase
         $this->assertTrue($next_schedule_key_update_found);
     }
 
+    public static function bankBillingPeriodProvider(): array
+    {
+        return array('monthly' => array('month', 1, '2027-02-15 00:00:00'),
+            'annual' => array('year', 1, '2028-01-15 00:00:00'),
+            'fortnightly' => array('week', 2, '2027-01-29 00:00:00'));
+    }
+
+    /** @dataProvider bankBillingPeriodProvider */
+    public function test_async_bank_completion_counts_once_and_preserves_billing_period(string $period, int $interval, string $expected): void
+    {
+        $subscription = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array(
+            '_wsz_completed_payments' => 1, '_wsz_total_payments' => 4,
+            '_wsz_pending_renewal_order_id' => 902, '_wsz_next_payment' => '2027-01-15 00:00:00',
+            '_wsz_billing_period' => $period, '_wsz_billing_interval' => $interval,
+        )));
+        $order = $this->create_context_order(902, array(), array('status' => 'processing', 'meta' => array('_wsz_subscription_id' => 901, '_wsz_renewal_schedule_key' => 'first-bank-cycle')));
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('acquire_lock', 'release_lock', 'get_test_cycle_minutes', 'should_send_test_cycle_notifications'))->getMock();
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $retry = $this->createMock(WSZ_Retry_Manager::class);
+        $retry->expects($this->once())->method('cancel_pending_retries');
+        $engine = new WSZ_Renewal_Engine($manager, $handler, $retry);
+        $engine->handle_async_payment_complete($subscription, $order);
+        $engine->handle_async_payment_complete($subscription, $order);
+        $this->assertSame(2, $manager->get_completed_payments($subscription));
+        $this->assertSame($expected, $subscription->get_meta('_wsz_next_payment'));
+        $this->assertSame(0, $subscription->get_meta('_wsz_pending_renewal_order_id'));
+        $this->assertSame('yes', $order->get_meta('_wsz_cycle_completed'));
+        $this->assertCount(1, $GLOBALS['wsz_test_scheduled_actions']);
+    }
+
+    public function test_resumed_bank_accounting_keeps_previously_counted_payment_and_next_date(): void
+    {
+        $sub = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array(
+            '_wsz_completed_payments' => 2, '_wsz_total_payments' => 4, '_wsz_last_counted_renewal_id' => 902,
+            '_wsz_next_payment' => '2027-02-15 00:00:00', '_wsz_billing_period' => 'month', '_wsz_billing_interval' => 1,
+        )));
+        $order = $this->create_context_order(902, array(), array('status' => 'processing', 'meta' => array(
+            '_wsz_subscription_id' => 901, '_wsz_cycle_next_payment_at' => strtotime('2027-02-15 00:00:00 UTC'),
+        )));
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('acquire_lock', 'release_lock', 'get_test_cycle_minutes', 'should_send_test_cycle_notifications'))->getMock();
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->handle_async_payment_complete($sub, $order);
+        $this->assertSame(2, $manager->get_completed_payments($sub));
+        $this->assertSame('2027-02-15 00:00:00', $sub->get_meta('_wsz_next_payment'));
+    }
+
+    public function test_settlement_does_not_reactivate_a_suspended_subscription(): void
+    {
+        $sub = $this->create_context_order(901, array(), array('status' => 'on-hold', 'meta' => array(
+            '_wsz_completed_payments' => 1, '_wsz_total_payments' => 4,
+            '_wsz_next_payment' => '2027-01-15 00:00:00', '_wsz_pending_renewal_order_id' => 902,
+            '_wsz_billing_period' => 'month', '_wsz_billing_interval' => 1,
+        )));
+        $order = $this->create_context_order(902, array(), array('status' => 'processing', 'payment_method' => 'wsz_paynl_sepa', 'meta' => array('_wsz_subscription_id' => 901)));
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('get_subscription', 'acquire_lock', 'release_lock', 'get_test_cycle_minutes', 'should_send_test_cycle_notifications'))->getMock();
+        $manager->method('get_subscription')->willReturn($sub);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $engine = new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class));
+        $engine->handle_async_payment_complete($sub, $order);
+        $this->assertSame('on-hold', $sub->get_status());
+        $this->assertSame(2, $manager->get_completed_payments($sub));
+        $this->assertSame('2027-02-15 00:00:00', $sub->get_meta('_wsz_next_payment'));
+        $this->assertSame(array(), $GLOBALS['wsz_test_scheduled_actions']);
+        $sub->update_status('active');
+        $engine->schedule_if_missing($sub);
+        $this->assertCount(1, $GLOBALS['wsz_test_scheduled_actions'], 'Reactivation should resume the next normal renewal.');
+    }
+
+    public function test_late_bank_settlement_reloads_cancelled_subscription_after_lock(): void
+    {
+        $old = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array('_wsz_completed_payments' => 3, '_wsz_total_payments' => 4)));
+        $current = $this->create_context_order(901, array(), array('status' => 'cancelled', 'meta' => array('_wsz_completed_payments' => 3, '_wsz_total_payments' => 4)));
+        $order = $this->create_context_order(902, array(), array('status' => 'processing', 'payment_method' => 'wsz_paynl_sepa', 'meta' => array('_wsz_subscription_id' => 901)));
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('get_subscription', 'acquire_lock', 'release_lock'))->getMock();
+        $manager->method('get_subscription')->willReturn($current);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->handle_async_payment_complete($old, $order);
+        $this->assertSame('cancelled', $current->get_status());
+        $this->assertSame(4, $manager->get_completed_payments($current));
+        $this->assertSame(array(), $GLOBALS['wsz_test_scheduled_actions']);
+        $this->assertSame('yes', $order->get_meta('_wsz_cycle_completed'));
+    }
+
+    public function test_non_sepa_async_completion_preserves_existing_reactivation_behavior(): void
+    {
+        $sub = $this->create_context_order(901, array(), array('status' => 'on-hold', 'meta' => array(
+            '_wsz_completed_payments' => 1, '_wsz_total_payments' => 4, '_wsz_next_payment' => '2027-01-15 00:00:00',
+            '_wsz_billing_period' => 'month', '_wsz_billing_interval' => 1,
+        )));
+        $order = $this->create_context_order(902, array(), array('status' => 'processing', 'payment_method' => 'stripe', 'meta' => array('_wsz_subscription_id' => 901)));
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('acquire_lock', 'release_lock', 'get_test_cycle_minutes', 'should_send_test_cycle_notifications'))->getMock();
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->handle_async_payment_complete($sub, $order);
+        $this->assertSame('active', $sub->get_status());
+        $this->assertSame(2, $manager->get_completed_payments($sub));
+        $this->assertCount(1, $GLOBALS['wsz_test_scheduled_actions']);
+    }
+
+    public function test_old_scheduled_key_cannot_charge_the_next_billing_cycle_early(): void
+    {
+        $sub = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array(
+            '_wsz_next_schedule_key' => 'current-cycle', '_wsz_last_processed_schedule_key' => 'another-old-key',
+        )));
+        $order = $this->create_context_order(903, array(), array('status' => 'pending', 'total' => 10));
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $order;
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->willReturn($sub);
+        $manager->method('get_next_payment_timestamp')->willReturn(time() + 30 * DAY_IN_SECONDS);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->never())->method('dispatch_scheduled_payment');
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->process_renewal(901, 'stale-old-cycle');
+    }
+
+    public function test_sepa_preparation_can_use_the_current_due_key_when_scheduler_adjusted_its_time(): void
+    {
+        $next = time() + 60;
+        $sub = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array('_wsz_next_schedule_key' => 'adjusted-scheduler-key')));
+        $order = $this->create_context_order(903, array(), array('status' => 'pending', 'total' => 10));
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $order;
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->willReturn($sub);
+        $manager->method('get_next_payment_timestamp')->willReturn($next);
+        $manager->method('acquire_lock')->willReturn(true);
+        $manager->method('is_manual_renewal')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->once())->method('dispatch_scheduled_payment');
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->process_renewal(901, hash('sha256', '901|' . $next));
+    }
+
+    public function test_stale_renewal_worker_checks_persisted_pending_order_after_lock(): void
+    {
+        $stale = $this->create_context_order(901, array(), array('status' => 'active'));
+        $fresh = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array('_wsz_pending_renewal_order_id' => 902)));
+        $order = $this->create_context_order(903, array(), array('status' => 'pending', 'total' => 10));
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $order;
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->willReturnOnConsecutiveCalls($stale, $fresh);
+        $manager->method('get_next_payment_timestamp')->willReturn(time() + 60);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->never())->method('dispatch_scheduled_payment');
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->process_renewal(901, 'stale');
+    }
+
+    public function test_manual_subscription_does_not_reopen_an_already_paid_renewal(): void
+    {
+        $sub = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array(
+            '_wsz_next_payment' => gmdate('Y-m-d H:i:s', time() + 60), '_requires_manual_renewal' => 'yes',
+            '_wsz_completed_payments' => 1, '_wsz_total_payments' => 4,
+        )));
+        $order = $this->create_context_order(903, array(), array('status' => 'processing', 'total' => 10));
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $order;
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('get_subscription', 'acquire_lock', 'release_lock'))->getMock();
+        $manager->method('get_subscription')->willReturn($sub);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->once())->method('dispatch_scheduled_payment');
+        $retry = $this->createMock(WSZ_Retry_Manager::class);
+        $retry->expects($this->never())->method('queue_retry');
+        (new WSZ_Renewal_Engine($manager, $handler, $retry))->process_renewal(901, '');
+        $this->assertSame('processing', $order->get_status());
+        $this->assertSame('active', $sub->get_status());
+        $this->assertSame(2, $manager->get_completed_payments($sub));
+    }
+
+    public function test_manual_fallback_written_by_gateway_is_reloaded_before_retry_decision(): void
+    {
+        $next = gmdate('Y-m-d H:i:s', time() + 60);
+        $stale = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array('_wsz_next_payment' => $next, '_requires_manual_renewal' => 'no')));
+        $fresh = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array('_wsz_next_payment' => $next, '_requires_manual_renewal' => 'yes')));
+        $order = $this->create_context_order(903, array(), array('status' => 'pending', 'total' => 10));
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $order;
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('get_subscription', 'acquire_lock', 'release_lock'))->getMock();
+        $manager->method('get_subscription')->willReturnOnConsecutiveCalls($stale, $stale, $fresh);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->once())->method('dispatch_scheduled_payment');
+        $retry = $this->createMock(WSZ_Retry_Manager::class);
+        $retry->expects($this->never())->method('queue_retry');
+        (new WSZ_Renewal_Engine($manager, $handler, $retry))->process_renewal(901, '');
+        $this->assertSame('pending', $order->get_status());
+        $this->assertSame('on-hold', $fresh->get_status());
+    }
+
+    public function test_pending_collection_prevents_creation_or_dispatch_of_another_renewal(): void
+    {
+        $sub = $this->create_context_order(901, array(), array('status' => 'active', 'meta' => array('_wsz_pending_renewal_order_id' => 902)));
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->willReturn($sub);
+        $manager->method('get_next_payment_timestamp')->willReturn(time() + 60);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->never())->method('dispatch_scheduled_payment');
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->process_renewal(901);
+    }
+
+    public function test_old_sepa_preparation_cannot_charge_a_new_card_method_early(): void
+    {
+        $sub = $this->create_context_order(901, array(), array('status' => 'active', 'payment_method' => 'pay_gateway_visa'));
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->willReturn($sub);
+        $manager->expects($this->never())->method('acquire_lock');
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->never())->method('dispatch_scheduled_payment');
+        (new WSZ_Renewal_Engine($manager, $handler, $this->createMock(WSZ_Retry_Manager::class)))->prepare_sepa_renewal(901, 'old-preparation');
+    }
+
+    public function test_pending_bank_renewal_is_not_failed_or_retried(): void
+    {
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(901);
+        $subscription->method('get_status')->willReturn('active');
+        $order = $this->createMock(WC_Order::class);
+        $order->method('get_id')->willReturn(902);
+        $order->method('get_total')->willReturn(23.47);
+        $order->method('get_meta')->willReturnCallback(static fn ($key) => '_wsz_async_payment_pending' === $key ? 'yes' : '');
+        $order->expects($this->never())->method('update_status');
+        $GLOBALS['wsz_test_wcs_renewal_order'] = $order;
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->willReturn($subscription);
+        $manager->method('get_next_payment_timestamp')->willReturn(time() + 60);
+        $manager->method('acquire_lock')->willReturn(true);
+        $manager->expects($this->never())->method('transition_status');
+        $manager->expects($this->never())->method('increment_completed_payments');
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->once())->method('dispatch_scheduled_payment')->with($subscription, $order, 23.47);
+        $retry = $this->createMock(WSZ_Retry_Manager::class);
+        $retry->expects($this->never())->method('queue_retry');
+        (new WSZ_Renewal_Engine($manager, $handler, $retry))->process_renewal(901);
+    }
+
     public function test_process_renewal_handles_manual_mode_without_failed_retry_flow(): void
     {
         $subscription = $this->createMock(WC_Order::class);
@@ -1090,19 +1377,20 @@ final class RenewalEngineTest extends TestCase
             ->expects($this->never())
             ->method('update_status');
         $renewal_order
-            ->expects($this->never())
-            ->method('is_paid');
+            ->expects($this->once())
+            ->method('is_paid')
+            ->willReturn(false);
 
         $GLOBALS['wsz_test_wcs_renewal_order'] = $renewal_order;
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->exactly(3))
             ->method('get_subscription')
             ->with(901)
             ->willReturn($subscription);
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->exactly(2))
             ->method('get_next_payment_timestamp')
             ->with($subscription)
             ->willReturn(current_time('timestamp', true) + 60);
@@ -1182,12 +1470,12 @@ final class RenewalEngineTest extends TestCase
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->exactly(3))
             ->method('get_subscription')
             ->with(10524)
             ->willReturn($subscription);
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->exactly(2))
             ->method('get_next_payment_timestamp')
             ->with($subscription)
             ->willReturn(current_time('timestamp', true) + 60);
@@ -1269,12 +1557,12 @@ final class RenewalEngineTest extends TestCase
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->exactly(3))
             ->method('get_subscription')
             ->with(10647)
             ->willReturn($subscription);
         $subscription_manager
-            ->expects($this->once())
+            ->expects($this->exactly(2))
             ->method('get_next_payment_timestamp')
             ->with($subscription)
             ->willReturn(current_time('timestamp', true) + 60);
@@ -1686,6 +1974,7 @@ final class RenewalEngineTest extends TestCase
     {
         return new class($id, $items, $context) extends WC_Order {
             private int $id;
+            private string $status;
             private array $items;
             private array $meta;
             private int $customer_id;
@@ -1699,6 +1988,7 @@ final class RenewalEngineTest extends TestCase
             public function __construct(int $id, array $items, array $context)
             {
                 $this->id = $id;
+                $this->status = $context['status'] ?? 'pending';
                 $this->items = $items;
                 $this->meta = $context['meta'] ?? array();
                 $this->customer_id = (int) ($context['customer_id'] ?? 0);
@@ -1714,6 +2004,10 @@ final class RenewalEngineTest extends TestCase
             {
                 return $this->id;
             }
+
+            public function get_status() { return $this->status; }
+            public function is_paid() { return in_array($this->status, array('processing', 'completed'), true); }
+            public function update_status($status, $note = '', $manual = false) { $this->status = $status; }
 
             public function get_customer_id()
             {

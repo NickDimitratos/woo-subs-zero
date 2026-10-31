@@ -44,32 +44,213 @@ class WSZ_PayNL_Gateway_Integration
 
     public function intercept_paynl_token_exchange(): void
     {
-        $payload = $this->read_exchange_payload();
-
+        $raw = self::raw_token_exchange_body();
+        $body_payload = self::token_payload_from_body($raw);
+        $payload = $this->is_token_exchange_payload($body_payload) ? $body_payload : $this->read_exchange_payload();
         if (!$this->is_token_exchange_payload($payload)) {
             if ('token' === sanitize_key((string) ($payload['action'] ?? ''))) {
-                $this->log_diagnostic(
-                    'warning',
-                    __('PAY.nl token exchange received without a recurring token reference.', 'woo-subzero'),
-                    $this->sanitize_token_exchange_log_context($payload)
-                );
+                $this->log_diagnostic('warning', __('PAY.nl token exchange received without a recurring token reference.', 'woo-subzero'), $this->sanitize_token_exchange_log_context($payload));
             }
-
             return;
         }
 
+        // Order lookup is only a hint until the signature and order association are verified.
         $order = $this->resolve_order_from_token_exchange($payload);
-        if (!($order instanceof WC_Order)) {
-            $this->log_diagnostic(
-                'warning',
-                __('PAY.nl token exchange received, but the WooCommerce order could not be resolved.', 'woo-subzero'),
-                $this->sanitize_token_exchange_log_context($payload)
-            );
-            $this->respond_true('token_order_not_found');
+        $verified = $order instanceof WC_Order ? $this->verified_token_exchange_payload($order, $raw, self::token_exchange_headers()) : null;
+        if (!is_array($verified)) {
+            self::respond_token_exchange(false, 'token_not_verified');
         }
+        $token_id = $this->store_recurring_payment_token($order, $verified);
+        self::respond_token_exchange($token_id > 0, $token_id > 0 ? 'token_saved' : 'token_not_saved', $token_id > 0 ? 200 : 503);
+    }
 
-        $token_id = $this->store_recurring_payment_token($order, $payload);
-        $this->respond_true($token_id > 0 ? 'token_saved' : 'token_not_saved');
+    /** Read unmodified request bytes: PAY.nl signs the original body, not decoded JSON. */
+    public static function raw_token_exchange_body(): string
+    {
+        $raw = file_get_contents('php://input', false, null, 0, 1048577);
+        return is_string($raw) && strlen($raw) <= 1048576 ? $raw : '';
+    }
+
+    public static function token_payload_from_body(string $raw): array
+    {
+        if ('' === $raw || strlen($raw) > 1048576) {
+            return array();
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return array();
+        }
+        $object = isset($decoded['object']) && is_array($decoded['object']) ? $decoded['object'] : $decoded;
+        return WSZ_PayNL_Token_Support::normalize_payload($object);
+    }
+
+    public static function token_exchange_headers(): array
+    {
+        $all = function_exists('getallheaders') ? getallheaders() : array();
+        $all = is_array($all) ? array_change_key_case($all, CASE_LOWER) : array();
+        $headers = array();
+        foreach (array('signature-method', 'signature-algorithm', 'signature-keyid', 'signature') as $key) {
+            $server_key = 'HTTP_' . strtoupper(str_replace('-', '_', $key));
+            $value = $all[$key] ?? $_SERVER[$server_key] ?? '';
+            $headers[$key] = is_scalar($value) ? trim((string) $value) : '';
+        }
+        return $headers;
+    }
+
+    /** Return only signed body data, never merged query parameters. */
+    public function verified_token_exchange_payload(WC_Order $order, string $raw, array $headers): ?array
+    {
+        if ('' === $raw || strlen($raw) > 1048576 || (int) $order->get_customer_id() <= 0) {
+            return null;
+        }
+        $headers = array_change_key_case($headers, CASE_LOWER);
+        foreach (array('signature-method', 'signature-algorithm', 'signature-keyid', 'signature') as $header) {
+            if (isset($headers[$header]) && !is_scalar($headers[$header])) {
+                return null;
+            }
+        }
+        $verified = $this->verify_exchange_hmac($order, $raw, $headers);
+        // Extensions may perform their own authoritative verification of the entire token exchange.
+        $verified = apply_filters('wsz_subs_verify_paynl_token_exchange', $verified, $order, $raw, $headers);
+        if (true !== $verified) {
+            return null;
+        }
+        $payload = self::token_payload_from_body($raw);
+        $credentials = $this->get_recurring_credentials($order, $order);
+        $service_id = (string) ($credentials['service_id'] ?? '');
+        $key_id = (string) ($headers['signature-keyid'] ?? '');
+        $body_service = $payload['serviceid'] ?? $payload['service_id'] ?? '';
+        if (!is_scalar($body_service) || ('' !== (string) $body_service && !hash_equals($service_id, (string) $body_service))
+            || (0 === strpos(strtoupper($key_id), 'SL-') && !hash_equals($service_id, $key_id))) {
+            return null;
+        }
+        if (!$this->is_token_exchange_payload($payload) || !$this->token_exchange_matches_order($order, $payload)) {
+            return null;
+        }
+        $resolved = $this->resolve_order_from_token_exchange($payload);
+        return $resolved instanceof WC_Order && $resolved->get_id() === $order->get_id() ? $payload : null;
+    }
+
+    /** Verify exactly the bytes received, using the key identified by PAY.nl. */
+    private function verify_exchange_hmac(WC_Order $order, string $raw, array $headers): bool
+    {
+        if ('' === $raw || strlen($raw) > 1048576) {
+            return false;
+        }
+        $headers = array_change_key_case($headers, CASE_LOWER);
+        foreach (array('signature-method', 'signature-algorithm', 'signature-keyid', 'signature') as $header) {
+            if (isset($headers[$header]) && !is_scalar($headers[$header])) {
+                return false;
+            }
+        }
+        $method = strtolower((string) ($headers['signature-method'] ?? ''));
+        $algorithm = strtolower((string) ($headers['signature-algorithm'] ?? ''));
+        $key_id = (string) ($headers['signature-keyid'] ?? '');
+        $signature = strtolower((string) ($headers['signature'] ?? ''));
+        $credentials = $this->get_recurring_credentials($order, $order);
+        $keys = array();
+        if (!empty($credentials['username']) && !empty($credentials['password'])) {
+            $keys[(string) $credentials['username']] = (string) $credentials['password'];
+        }
+        $keys = apply_filters('wsz_subs_paynl_token_signing_keys', $keys, $order);
+        $secret = is_array($keys) && isset($keys[$key_id]) && is_string($keys[$key_id]) ? $keys[$key_id] : '';
+        $service_id = (string) ($credentials['service_id'] ?? '');
+        return 'hmac' === $method && in_array($algorithm, array('sha256', 'sha512'), true)
+            && '' !== $key_id && '' !== $secret && '' !== $signature
+            && (0 !== strpos(strtoupper($key_id), 'SL-') || ('' !== $service_id && hash_equals($service_id, $key_id)))
+            && hash_equals(hash_hmac($algorithm, $raw, $secret), $signature);
+    }
+
+    /** A customer-visible order key is not proof that the payment provider was paid. */
+    public function verified_order_exchange_status(WC_Order $order, string $raw, array $headers): ?string
+    {
+        if (!$this->verify_exchange_hmac($order, $raw, $headers)) {
+            return null;
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded) || 'order' !== ($decoded['type'] ?? null) || !isset($decoded['object']) || !is_array($decoded['object'])) {
+            return null;
+        }
+        $object = $decoded['object'];
+        $credentials = $this->get_recurring_credentials($order, $order);
+        $service_id = (string) ($credentials['service_id'] ?? '');
+        $body_service = $object['serviceId'] ?? null;
+        $reference = $object['reference'] ?? null;
+        $amount = $object['amount']['value'] ?? null;
+        $currency = $object['amount']['currency'] ?? null;
+        $status = $object['status']['code'] ?? null;
+        if ('' === $service_id || !is_string($body_service) || !hash_equals($service_id, $body_service)
+            || !is_string($reference) || !is_scalar($amount) || !preg_match('/^[0-9]+$/D', (string) $amount)
+            || (int) $amount !== $this->amount_to_cents((float) $order->get_total())
+            || !is_string($currency) || strtoupper($currency) !== strtoupper((string) $order->get_currency())
+            || !is_scalar($status) || !preg_match('/^-?[0-9]+$/D', (string) $status)) {
+            return null;
+        }
+        $payload = WSZ_PayNL_Token_Support::normalize_payload($object);
+        if (!hash_equals('WSZ-R' . $order->get_id(), $reference) && !$this->token_exchange_matches_order($order, $payload)) {
+            return null;
+        }
+        if (100 === (int) $status) {
+            return 'paid';
+        }
+        if (in_array((int) $status, array(-60, -61, -63, -64, -80, -90), true)) {
+            return 'failed';
+        }
+        return in_array((int) $status, array(20, 50, 80, 85, 90, 95, 97, 98), true) ? 'pending' : null;
+    }
+
+    private function token_exchange_matches_order(WC_Order $order, array $payload): bool
+    {
+        $provider_ids = $this->paynl_exchange_identifiers($payload);
+        if (empty($provider_ids)) {
+            return false;
+        }
+        $keys = apply_filters('wsz_subs_paynl_token_exchange_order_lookup_meta_keys',
+            array('transactionId', '_transaction_id', 'transaction_id', '_pay_order_id', '_paynl_order_id', '_payment_session_id', 'payment_session_id'), $payload);
+        foreach (is_array($keys) ? $keys : array() as $key) {
+            $value = $order->get_meta((string) $key, true);
+            if (is_scalar($value) && '' !== (string) $value && in_array((string) $value, $provider_ids, true)) {
+                return true;
+            }
+        }
+        if (is_callable(array($order, 'get_transaction_id'))) {
+            $transaction_id = (string) $order->get_transaction_id();
+            if ('' !== $transaction_id && in_array($transaction_id, $provider_ids, true)) {
+                return true;
+            }
+        }
+        if (class_exists('PPMFWC_Helper_Transaction') && is_callable(array('PPMFWC_Helper_Transaction', 'getTransaction'))) {
+            foreach ($provider_ids as $provider_id) {
+                $transaction = PPMFWC_Helper_Transaction::getTransaction($provider_id);
+                if (is_array($transaction) && (int) ($transaction['order_id'] ?? 0) === (int) $order->get_id()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** PAY.nl token exchanges can contain distinct order, transaction and session IDs. */
+    private function paynl_exchange_identifiers(array $payload): array
+    {
+        $ids = array();
+        foreach (array('order_id', 'orderid', 'id', 'transaction_id', 'transactionid', 'payment_id', 'paymentid',
+            'payment_session_id', 'paymentsessionid', 'payment_sessionid', 'transaction_order_id', 'transaction_orderid') as $key) {
+            if (isset($payload[$key]) && is_scalar($payload[$key]) && '' !== (string) $payload[$key]) {
+                $ids[] = sanitize_text_field((string) $payload[$key]);
+            }
+        }
+        return array_values(array_unique(array_filter($ids)));
+    }
+
+    public static function respond_token_exchange(bool $accepted, string $message, int $status = 0): void
+    {
+        if (!headers_sent()) {
+            status_header($status > 0 ? $status : ($accepted ? 200 : 403));
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        echo wp_json_encode(array('result' => $accepted, 'description' => sanitize_text_field($message)));
+        exit;
     }
 
     /**
@@ -224,7 +405,7 @@ class WSZ_PayNL_Gateway_Integration
                     array(
                         'renewal_order_id' => $renewal_order->get_id(),
                         'subscription_id' => $subscription->get_id(),
-                        'error_message' => $response->get_error_message(),
+                        'error_message' => __('PAY.nl connection failed.', 'woo-subzero'),
                     ),
                     $this->authorize_request_diagnostic_context($endpoint, $payload)
                 )
@@ -232,7 +413,7 @@ class WSZ_PayNL_Gateway_Integration
 
             return array(
                 'paid' => false,
-                'message' => $response->get_error_message(),
+                'message' => __('PAY.nl connection failed. Review the gateway connection and retry policy.', 'woo-subzero'),
             );
         }
 
@@ -266,7 +447,7 @@ class WSZ_PayNL_Gateway_Integration
                         'renewal_order_id' => $renewal_order->get_id(),
                         'subscription_id' => $subscription->get_id(),
                         'status_code' => $status_code,
-                        'response_keys' => WSZ_PayNL_Token_Support::payload_keys($decoded),
+                        'response_keys' => array_values(array_intersect(array_keys($decoded), array('request', 'payment', 'transaction'))),
                         'body_empty' => '' === trim($body) ? 'yes' : 'no',
                     ),
                     $this->authorize_request_diagnostic_context($endpoint, $payload),
@@ -284,7 +465,7 @@ class WSZ_PayNL_Gateway_Integration
                         'renewal_order_id' => $renewal_order->get_id(),
                         'subscription_id' => $subscription->get_id(),
                         'status_code' => $status_code,
-                        'response_keys' => WSZ_PayNL_Token_Support::payload_keys($decoded),
+                        'response_keys' => array_values(array_intersect(array_keys($decoded), array('request', 'payment', 'transaction'))),
                         'body_empty' => '' === trim($body) ? 'yes' : 'no',
                     ),
                     $this->authorize_request_diagnostic_context($endpoint, $payload),
@@ -348,7 +529,7 @@ class WSZ_PayNL_Gateway_Integration
             'currency' => is_callable(array($order, 'get_currency'))
                 ? self::sanitize_text_value((string) $order->get_currency())
                 : '',
-            'transaction_id' => self::sanitize_text_value($transaction_id),
+            'transaction_id' => self::safe_transaction_log_id($transaction_id),
         );
 
         self::append_transaction_log($entry);
@@ -389,7 +570,7 @@ class WSZ_PayNL_Gateway_Integration
 
     public static function record_renewal_exchange_transaction(WC_Order $renewal_order, string $transaction_id): void
     {
-        $transaction_id = self::sanitize_text_value($transaction_id);
+        $transaction_id = self::safe_transaction_log_id($transaction_id);
 
         if ('' === $transaction_id || !self::is_supported_gateway_id((string) $renewal_order->get_payment_method())) {
             return;
@@ -450,8 +631,7 @@ class WSZ_PayNL_Gateway_Integration
             return $filtered_order;
         }
 
-        $pay_order_id = $this->extract_pay_order_id($payload);
-        if ('' !== $pay_order_id) {
+        foreach ($this->paynl_exchange_identifiers($payload) as $pay_order_id) {
             $order = $this->resolve_order_from_paynl_transaction_table($pay_order_id);
             if ($order instanceof WC_Order) {
                 return $order;
@@ -489,6 +669,10 @@ class WSZ_PayNL_Gateway_Integration
         $gateway_id = sanitize_key((string) $order->get_payment_method());
         if ('' === $gateway_id) {
             $gateway_id = self::GATEWAY_ID;
+        }
+
+        if (!self::is_supported_gateway_id($gateway_id)) {
+            return 0;
         }
 
         $customer_id = (int) $order->get_customer_id();
@@ -754,12 +938,9 @@ class WSZ_PayNL_Gateway_Integration
         $reference_values = array_values(
             array_unique(
                 array_filter(
-                    array(
-                        $this->extract_pay_order_id($payload),
-                        sanitize_text_field((string) ($payload['payment_session_id'] ?? '')),
-                        sanitize_text_field((string) ($payload['paymentsessionid'] ?? '')),
-                        sanitize_text_field((string) ($payload['reference'] ?? '')),
-                    )
+                    array_merge($this->paynl_exchange_identifiers($payload), array(
+                        isset($payload['reference']) && is_scalar($payload['reference']) ? sanitize_text_field((string) $payload['reference']) : '',
+                    ))
                 )
             )
         );
@@ -930,6 +1111,17 @@ class WSZ_PayNL_Gateway_Integration
         return trim($value);
     }
 
+    /** Never copy arbitrary provider text, tokens, IBANs or API secrets into transaction logs. */
+    private static function safe_transaction_log_id(string $value): string
+    {
+        $value = self::sanitize_text_value($value);
+        if (preg_match('/^(?:VY|AT|SL)-/i', $value)) {
+            return '';
+        }
+        $pattern = '/^(?:EX-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}|[0-9]{8,20}X[A-Z0-9]{3,16}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?:[A-Z]{2,16}-){1,3}[0-9]{1,16})$/iD';
+        return 1 === preg_match($pattern, $value) ? $value : '';
+    }
+
     private static function resolve_subscription_id_from_order(WC_Order $order): int
     {
         $subscription_id = (int) $order->get_meta('_wsz_subscription_id', true);
@@ -1001,10 +1193,6 @@ class WSZ_PayNL_Gateway_Integration
             return false;
         }
 
-        if (0 === strpos($gateway_id, self::GATEWAY_ID_PREFIX)) {
-            return true;
-        }
-
         $gateway_ids = function_exists('apply_filters')
             ? apply_filters('wsz_subs_paynl_gateway_ids', self::default_gateway_ids())
             : self::default_gateway_ids();
@@ -1028,6 +1216,57 @@ class WSZ_PayNL_Gateway_Integration
         return in_array($gateway_id, array_values(array_unique($normalized)), true);
     }
 
+    public static function is_paynl_gateway_id(string $gateway_id): bool
+    {
+        $gateway_id = sanitize_key($gateway_id);
+
+        return 0 === strpos($gateway_id, self::GATEWAY_ID_PREFIX) || self::is_supported_gateway_id($gateway_id);
+    }
+
+    public static function is_manual_only_gateway_id(string $gateway_id): bool
+    {
+        if (!self::is_paynl_gateway_id($gateway_id)
+            || (self::is_supported_gateway_id($gateway_id) && self::are_card_tokens_enabled())) {
+            return false;
+        }
+
+        // Custom adapters must explicitly opt in and supply their own recurring-charge implementation.
+        $custom_ids = apply_filters('wsz_subs_tokenized_gateway_ids', array());
+
+        return !is_array($custom_ids) || !in_array(sanitize_key($gateway_id), array_map('sanitize_key', $custom_ids), true);
+    }
+
+    public static function has_valid_recurring_payment_token(WC_Order $subscription, int $token_id): bool
+    {
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+        if (!self::is_supported_gateway_id($gateway_id) || $token_id <= 0 || !class_exists('WC_Payment_Tokens')) {
+            return false;
+        }
+
+        $token = WC_Payment_Tokens::get($token_id);
+        $customer_id = (int) $subscription->get_customer_id();
+
+        return $token instanceof WC_Payment_Token
+            && $customer_id > 0
+            && (int) $token->get_user_id() === $customer_id
+            && sanitize_key((string) $token->get_gateway_id()) === $gateway_id
+            && '' !== WSZ_PayNL_Token_Support::extract_recurring_id(array('recurring_id' => (string) $token->get_token()));
+    }
+
+    public static function can_sync_parent_payment_context(WC_Order $order, WC_Order $subscription): bool
+    {
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+
+        $current_token_id = (int) $subscription->get_meta('_payment_token_id', true);
+        if ($current_token_id > 0 && self::has_valid_recurring_payment_token($subscription, $current_token_id)
+            && $current_token_id !== (int) $order->get_meta('_payment_token_id', true)) {
+            return false;
+        }
+
+        return ('' === $gateway_id || $gateway_id === sanitize_key((string) $order->get_payment_method()))
+            && (int) $subscription->get_customer_id() === (int) $order->get_customer_id();
+    }
+
     private function sync_token_to_order_subscriptions(WC_Order $order, string $gateway_id, int $token_id): void
     {
         if (!($this->subscription_manager instanceof WSZ_Subscription_Manager)) {
@@ -1043,6 +1282,10 @@ class WSZ_PayNL_Gateway_Integration
         foreach ($subscription_ids as $subscription_id) {
             $subscription = $this->subscription_manager->get_subscription((int) $subscription_id);
             if (!($subscription instanceof WC_Order)) {
+                continue;
+            }
+
+            if (!self::can_sync_parent_payment_context($order, $subscription)) {
                 continue;
             }
 
@@ -1128,16 +1371,8 @@ class WSZ_PayNL_Gateway_Integration
             return __('PAY.nl recurring charge response did not include an approved transaction status.', 'woo-subzero');
         }
 
-        $message = $this->first_scalar(
-            $decoded,
-            array(
-                'request.errorMessage',
-                'request.errorTag',
-                'request.errorId',
-            )
-        );
-
-        return '' !== $message ? $message : __('PAY.nl recurring charge was not approved.', 'woo-subzero');
+        // Provider error text is untrusted and may echo credentials or payment details.
+        return __('PAY.nl recurring charge was not approved.', 'woo-subzero');
     }
 
     /**
@@ -1147,25 +1382,20 @@ class WSZ_PayNL_Gateway_Integration
     private function authorize_response_diagnostic_context(array $decoded): array
     {
         $context = array();
+        // Only documented, bounded codes are logged; provider prose can echo sensitive data.
         $fields = array(
-            'request_result' => array('request.result'),
-            'request_error_id' => array('request.errorId'),
-            'request_error_tag' => array('request.errorTag'),
-            'request_error_message' => array('request.errorMessage'),
-            'transaction_state' => array('transaction.state'),
-            'transaction_state_name' => array('transaction.stateName'),
-            'payment_bank_code' => array('payment.bankCode'),
-            'payment_bank_message' => array('payment.bankMessage'),
+            'request_result' => array('request.result', '/^[01]$/D'),
+            'request_error_id' => array('request.errorId', '/^PAY-[0-9]{1,10}$/iD'),
+            'transaction_state' => array('transaction.state', '/^-?[0-9]{1,6}$/D'),
+            'transaction_state_name' => array('transaction.stateName', '/^(paid|pending|declined|denied|cancelled|failed|error|authorised|authorized)$/iD'),
+            'payment_bank_code' => array('payment.bankCode', '/^[0-9]{1,8}$/D'),
         );
-
-        foreach ($fields as $context_key => $paths) {
-            $value = $this->first_scalar($decoded, $paths);
-
-            if ('' !== $value) {
+        foreach ($fields as $context_key => $field) {
+            $value = $this->first_scalar($decoded, array($field[0]));
+            if ('' !== $value && 1 === preg_match($field[1], $value)) {
                 $context[$context_key] = $value;
             }
         }
-
         return $context;
     }
 
@@ -1176,23 +1406,33 @@ class WSZ_PayNL_Gateway_Integration
     private function authorize_request_diagnostic_context(string $endpoint, array $payload): array
     {
         $token_id = $this->first_scalar($payload, array('payment.token.id'));
+        $type = $this->first_scalar($payload, array('transaction.type'));
+        $method = $this->first_scalar($payload, array('payment.method'));
+        $amount = $this->first_scalar($payload, array('transaction.amount'));
+        $currency = $this->first_scalar($payload, array('transaction.currency'));
+        $reference = $this->first_scalar($payload, array('transaction.reference'));
 
         return array(
             'paynl_api' => 'Payment/authorize',
-            'paynl_endpoint' => sanitize_text_field($endpoint),
+            'paynl_endpoint' => self::AUTHORIZE_ENDPOINT === $endpoint ? self::AUTHORIZE_ENDPOINT : 'custom',
             'content_type' => 'application/json',
-            'transaction_type' => $this->first_scalar($payload, array('transaction.type')),
-            'payment_method' => $this->first_scalar($payload, array('payment.method')),
+            'transaction_type' => 'MIT' === $type ? 'MIT' : 'custom',
+            'payment_method' => 'token' === $method ? 'token' : 'custom',
             'has_token_id' => '' !== $token_id ? 'yes' : 'no',
-            'request_amount' => $this->first_scalar($payload, array('transaction.amount')),
-            'request_currency' => $this->first_scalar($payload, array('transaction.currency')),
-            'request_reference' => $this->first_scalar($payload, array('transaction.reference')),
+            'request_amount' => preg_match('/^[0-9]{1,12}$/D', $amount) ? $amount : 'invalid',
+            'request_currency' => preg_match('/^[A-Z]{3}$/D', $currency) ? $currency : 'invalid',
+            'request_reference' => preg_match('/^WSZ-R[0-9]+$/D', $reference) ? $reference : 'custom',
         );
     }
 
     /**
      * @return array{service_id?:string,username?:string,password?:string}
      */
+    public function get_recurring_credentials(WC_Order $renewal_order, WC_Order $subscription): array
+    {
+        return $this->resolve_credentials($renewal_order, $subscription);
+    }
+
     private function resolve_credentials(WC_Order $renewal_order, WC_Order $subscription): array
     {
         $gateway_id = sanitize_key((string) $renewal_order->get_payment_method());
@@ -1384,24 +1624,21 @@ class WSZ_PayNL_Gateway_Integration
     private function sanitize_token_exchange_log_context(array $payload): array
     {
         $context = array();
-
-        foreach (array('action', 'source', 'order_id', 'orderid', 'id', 'transaction_id', 'transactionid', 'payment_id', 'paymentid', 'payment_session_id', 'paymentsessionid', 'reference', 'extra1', 'extra3') as $key) {
-            if (!empty($payload[$key]) && is_scalar($payload[$key])) {
-                $context[$key] = sanitize_text_field((string) $payload[$key]);
+        foreach (array('order_id', 'orderid', 'extra1', 'extra3') as $key) {
+            if (isset($payload[$key]) && is_scalar($payload[$key]) && 1 === preg_match('/^[0-9]{1,20}$/D', (string) $payload[$key])) {
+                $context[$key] = (string) $payload[$key];
             }
         }
-
-        $recurring_id_source_key = WSZ_PayNL_Token_Support::extract_recurring_id_source_key($payload);
-
-        if ('' !== $recurring_id_source_key) {
-            $context['has_recurring_id'] = 'yes';
-            $context['recurring_id_source_key'] = $recurring_id_source_key;
-        } else {
-            $context['has_recurring_id'] = 'no';
+        if ('token' === sanitize_key((string) ($payload['action'] ?? ''))) {
+            $context['action'] = 'token';
         }
-
-        $context['payload_keys'] = WSZ_PayNL_Token_Support::payload_keys($payload);
-
+        $source_key = WSZ_PayNL_Token_Support::extract_recurring_id_source_key($payload);
+        $context['has_recurring_id'] = '' !== $source_key ? 'yes' : 'no';
+        if ('' !== $source_key) {
+            $context['recurring_id_source_key'] = $source_key;
+        }
+        $known_keys = array('action', 'source', 'order_id', 'orderid', 'id', 'transaction_id', 'transactionid', 'payment_id', 'paymentid', 'payment_session_id', 'paymentsessionid', 'reference', 'extra1', 'extra3', 'recurring_id', 'recurringId', 'recurringid');
+        $context['payload_keys'] = array_values(array_intersect(array_keys($payload), $known_keys));
         return $context;
     }
 
@@ -1464,18 +1701,17 @@ class WSZ_PayNL_Gateway_Integration
         );
     }
 
-    private function is_paynl_tokens_enabled(): bool
+    public static function are_card_tokens_enabled(): bool
     {
         if (!function_exists('get_option')) {
             return false;
         }
-
         $settings = get_option('wsz_subs_options', array());
+        return is_array($settings) && 'yes' === sanitize_key((string) ($settings['enable_paynl_tokens'] ?? 'no'));
+    }
 
-        if (!is_array($settings)) {
-            return false;
-        }
-
-        return 'yes' === sanitize_key((string) ($settings['enable_paynl_tokens'] ?? 'no'));
+    private function is_paynl_tokens_enabled(): bool
+    {
+        return self::are_card_tokens_enabled();
     }
 }

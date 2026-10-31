@@ -235,6 +235,18 @@ class WSZ_Admin_Settings
             )
         );
 
+        foreach (array(
+            'enable_paynl_sepa' => __('Enable PAY.nl iDEAL signup with SEPA renewals', 'woo-subzero'),
+            'paynl_sepa_creditor_name' => __('SEPA creditor name', 'woo-subzero'),
+            'paynl_sepa_creditor_id' => __('SEPA creditor identifier', 'woo-subzero'),
+            'paynl_sepa_terms_url' => __('SEPA mandate and cancellation terms URL', 'woo-subzero'),
+            'paynl_sepa_notice_days' => __('SEPA advance notice (days)', 'woo-subzero'),
+        ) as $key => $label) {
+            $renderer = 'enable_paynl_sepa' === $key ? 'render_checkbox_field' : ('paynl_sepa_notice_days' === $key ? 'render_number_field' : 'render_text_field');
+            add_settings_field($key, $label, array($this, $renderer), self::SETTINGS_PAGE, 'wsz_subs_payment_gateways',
+                array('key' => $key, 'description' => $this->get_field_description($key), 'min' => 1, 'max' => 60));
+        }
+
         add_settings_field(
             'enable_stripe_tokens',
             __('Enable Stripe tokens', 'woo-subzero'),
@@ -364,6 +376,11 @@ class WSZ_Admin_Settings
             'enable_test_deferred_start' => $this->sanitize_yes_no($settings['enable_test_deferred_start']),
             'enable_test_cycle_notifications' => $this->sanitize_yes_no($settings['enable_test_cycle_notifications']),
             'enable_paynl_tokens' => $this->sanitize_yes_no($settings['enable_paynl_tokens']),
+            'enable_paynl_sepa' => $this->sanitize_yes_no($settings['enable_paynl_sepa']),
+            'paynl_sepa_creditor_name' => sanitize_text_field((string) $settings['paynl_sepa_creditor_name']),
+            'paynl_sepa_creditor_id' => strtoupper(preg_replace('/[^A-Z0-9]/i', '', (string) $settings['paynl_sepa_creditor_id'])),
+            'paynl_sepa_terms_url' => esc_url_raw((string) $settings['paynl_sepa_terms_url']),
+            'paynl_sepa_notice_days' => min(60, max(1, (int) $settings['paynl_sepa_notice_days'])),
             'enable_stripe_tokens' => $this->sanitize_yes_no($settings['enable_stripe_tokens']),
             'enable_mollie_tokens' => $this->sanitize_yes_no($settings['enable_mollie_tokens']),
             'customer_suspension_limit' => min(30, max(0, (int) $settings['customer_suspension_limit'])),
@@ -522,6 +539,10 @@ class WSZ_Admin_Settings
     private function get_field_description(string $key): string
     {
         $descriptions = array(
+            'enable_paynl_sepa' => __('Enable only after PAY.nl approves SEPA Direct Debit for this sales location. EUR only; requires explicit customer mandate consent and existing PAY.nl credentials. This feature cannot submit bank collections in PAY.nl checkout test mode or WSZ accelerated test mode.', 'woo-subzero'),
+            'paynl_sepa_creditor_id' => __('Use the creditor identifier confirmed by PAY.nl for the mandate agreement.', 'woo-subzero'),
+            'paynl_sepa_terms_url' => __('Public mandate terms, merchant contact and cancellation instructions shown with the customer consent.', 'woo-subzero'),
+            'paynl_sepa_notice_days' => __('Defaults to 14 days. Shorten only when the customer mandate agreement permits it. Late preparation delays collection to preserve this notice period.', 'woo-subzero'),
             'enable_manual_renewals' => __('Allows renewal orders to remain payable manually when auto-charge is not preferred or unavailable.', 'woo-subzero'),
             'auto_restore_automatic_renewals' => __('When a customer successfully updates payment context or pays a manual renewal, switch the subscription back to automatic renewal.', 'woo-subzero'),
             'enable_retries' => __('Queues failed automatic renewal payments for retry using the configured retry policy.', 'woo-subzero'),
@@ -1063,6 +1084,11 @@ class WSZ_Admin_Settings
             'test_deferred_start_minutes' => 1,
             'enable_test_cycle_notifications' => 'no',
             'enable_paynl_tokens' => 'no',
+            'enable_paynl_sepa' => 'no',
+            'paynl_sepa_creditor_name' => '',
+            'paynl_sepa_creditor_id' => '',
+            'paynl_sepa_terms_url' => '',
+            'paynl_sepa_notice_days' => 14,
             'enable_stripe_tokens' => 'no',
             'enable_mollie_tokens' => 'no',
             'enable_role_transitions' => 'no',

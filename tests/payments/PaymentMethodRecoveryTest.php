@@ -232,6 +232,11 @@ final class PaymentMethodRecoveryTest extends TestCase
 
     public function test_failing_payment_method_update_restores_automatic_renewal_when_enabled(): void
     {
+        $token = new PaymentMethodRecoveryToken(789);
+        $token->set_token('pm_card_saved');
+        $token->set_gateway_id('stripe');
+        WC_Payment_Tokens::set_test_tokens(array(789 => $token));
+
         $GLOBALS['wsz_subs_test_options']['auto_restore_automatic_renewals'] = 'yes';
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -301,6 +306,11 @@ final class PaymentMethodRecoveryTest extends TestCase
 
     public function test_failing_payment_method_update_accepts_renewal_order_signature(): void
     {
+        $token = new PaymentMethodRecoveryToken(654);
+        $token->set_token('pm_card_saved');
+        $token->set_gateway_id('stripe');
+        WC_Payment_Tokens::set_test_tokens(array(654 => $token));
+
         $GLOBALS['wsz_subs_test_options']['auto_restore_automatic_renewals'] = 'yes';
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -344,6 +354,11 @@ final class PaymentMethodRecoveryTest extends TestCase
 
     public function test_manual_renewal_payment_complete_restores_automatic_renewal_when_enabled(): void
     {
+        $token = new PaymentMethodRecoveryToken(321);
+        $token->set_token('pm_card_saved');
+        $token->set_gateway_id('stripe');
+        WC_Payment_Tokens::set_test_tokens(array(321 => $token));
+
         $GLOBALS['wsz_subs_test_options']['auto_restore_automatic_renewals'] = 'yes';
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -442,7 +457,7 @@ final class PaymentMethodRecoveryTest extends TestCase
             ->willReturn(44);
 
         $subscription
-            ->expects($this->once())
+            ->expects($this->exactly(2))
             ->method('get_payment_method')
             ->willReturn('stripe');
 
@@ -472,10 +487,9 @@ final class PaymentMethodRecoveryTest extends TestCase
             ->method('get_customer_id')
             ->willReturn(9);
         $subscription
-            ->expects($this->once())
+            ->expects($this->exactly(3))
             ->method('get_meta')
-            ->with('_wsz_parent_order_id', true)
-            ->willReturn(10523);
+            ->willReturnMap(array(array('_wsz_parent_order_id', true, 10523), array('_wsz_manual_renewal_fallback_reason', true, ''), array('_payment_token_id', true, '')));
         $subscription
             ->method('get_payment_method')
             ->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
@@ -531,6 +545,8 @@ final class PaymentMethodRecoveryTest extends TestCase
         $GLOBALS['wsz_subs_test_orders'][10529] = $parent_order;
 
         $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_customer_id')->willReturn(9);
+        $subscription->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
         $subscription->method('get_id')->willReturn(10530);
 
         $subscription_manager
@@ -581,6 +597,8 @@ final class PaymentMethodRecoveryTest extends TestCase
         $parent_order->update_meta_data('_wsz_subscription_ids', array(10659));
 
         $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_customer_id')->willReturn(9);
+        $subscription->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
         $subscription->method('get_id')->willReturn(10659);
 
         $subscription_manager
@@ -630,6 +648,8 @@ final class PaymentMethodRecoveryTest extends TestCase
         $GLOBALS['wsz_subs_test_orders'][10658] = $parent_order;
 
         $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_customer_id')->willReturn(9);
+        $subscription->method('get_payment_method')->willReturn(WSZ_PayNL_Gateway_Integration::GATEWAY_ID);
         $subscription->method('get_id')->willReturn(10659);
         $subscription
             ->expects($this->once())
@@ -672,6 +692,11 @@ final class PaymentMethodRecoveryTest extends TestCase
 
     public function test_sync_subscriptions_from_paid_parent_order_updates_linked_subscription_payment_context(): void
     {
+        $token = new PaymentMethodRecoveryToken(90210);
+        $token->set_token('pm_card_saved');
+        $token->set_gateway_id('stripe');
+        WC_Payment_Tokens::set_test_tokens(array(90210 => $token));
+
         $GLOBALS['wsz_subs_test_options']['auto_restore_automatic_renewals'] = 'yes';
 
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -816,6 +841,11 @@ final class PaymentMethodRecoveryTest extends TestCase
 
     public function test_subscription_activation_syncs_parent_order_token_context(): void
     {
+        $token = new PaymentMethodRecoveryToken(778);
+        $token->set_token('pm_card_saved');
+        $token->set_gateway_id('stripe');
+        WC_Payment_Tokens::set_test_tokens(array(778 => $token));
+
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
         $handler = new WSZ_Payment_Handler($subscription_manager);
 

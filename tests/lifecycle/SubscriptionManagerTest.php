@@ -298,6 +298,29 @@ final class SubscriptionManagerTest extends TestCase
         $manager->maybe_activate_subscriptions_from_parent_order(51, 'pending', 'on-hold', $order);
     }
 
+    public function test_clearing_the_final_payment_date_clears_native_and_wsz_schedules(): void
+    {
+        $sub = new class extends WC_Order {
+            public array $meta = array('_wsz_total_payments' => 6, '_wsz_completed_payments' => 6);
+            public int $native_next = 1795305600;
+            public array $date_updates = array();
+            public function get_meta($key, $single = true) { return $this->meta[$key] ?? ''; }
+            public function update_meta_data($key, $value) { $this->meta[$key] = $value; }
+            public function get_time($key) { return $this->native_next; }
+            public function update_dates($dates, $timezone = 'gmt') {
+                $this->date_updates[] = array($dates, $timezone);
+                $this->native_next = (int) $dates['next_payment'];
+            }
+        };
+        $manager = new WSZ_Subscription_Manager();
+        $this->assertSame(0, $manager->get_next_payment_timestamp($sub), 'An old native date must not promise a seventh payment.');
+        $manager->update_next_payment_timestamp($sub, 0);
+        $this->assertSame(array(array(array('next_payment' => 0), 'gmt')), $sub->date_updates);
+        $this->assertSame(0, $sub->native_next);
+        $this->assertSame('', $sub->get_meta('_wsz_next_payment'));
+        $this->assertSame('', $sub->get_meta('_schedule_next_payment'));
+    }
+
     public function test_process_expiration_keeps_pending_subscription_unchanged(): void
     {
         $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)

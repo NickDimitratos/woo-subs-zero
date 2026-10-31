@@ -252,6 +252,10 @@ final class PayNLGatewayIntegrationTest extends TestCase
 
     public function test_recurring_callback_is_provided_for_dynamic_paynl_gateway_ids(): void
     {
+        add_filter('wsz_subs_paynl_gateway_ids', static function (array $ids): array {
+            $ids[] = 'pay_gateway_amex';
+            return $ids;
+        });
         $integration = new WSZ_PayNL_Gateway_Integration();
         $renewal_order = $this->createMock(WC_Order::class);
         $subscription = $this->createMock(WC_Order::class);
@@ -700,6 +704,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
             ->method('save');
 
         $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_customer_id')->willReturn(5);
         $subscription
             ->expects($this->once())
             ->method('set_payment_method')
@@ -871,6 +876,61 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('EX-6582-4371-5560', $result['transaction_id'] ?? '');
     }
 
+    public function test_token_exchange_diagnostics_do_not_include_untrusted_sensitive_values(): void
+    {
+        $method = new ReflectionMethod(WSZ_PayNL_Gateway_Integration::class, 'sanitize_token_exchange_log_context');
+        $context = $method->invoke(new WSZ_PayNL_Gateway_Integration(), array(
+            'action' => 'token', 'extra1' => 'NL91ABNA0417164300', 'recurring_id' => 'VY-9212-9171-2390',
+            'secret-as-an-untrusted-key' => 'private',
+        ));
+        $serialized = json_encode($context);
+        $this->assertStringNotContainsString('NL91ABNA0417164300', $serialized);
+        $this->assertStringNotContainsString('VY-9212-9171-2390', $serialized);
+        $this->assertStringNotContainsString('secret-as-an-untrusted-key', $serialized);
+    }
+
+    public function test_transaction_logs_do_not_store_untrusted_sensitive_identifiers(): void
+    {
+        $order = $this->createMock(WC_Order::class);
+        $order->method('get_id')->willReturn(10488);
+        $order->method('get_total')->willReturn(50.0);
+        $order->method('get_currency')->willReturn('EUR');
+        $order->method('get_status')->willReturn('processing');
+        $sensitive = array('mock-api-password', 'VY-9212-9171-2390', 'NL91ABNA0417164300', str_repeat('a', 40));
+        foreach ($sensitive as $value) {
+            WSZ_PayNL_Gateway_Integration::record_transaction($order, 'renewal', $value, 50, 10487);
+        }
+        $logs = json_encode(WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10));
+        foreach ($sensitive as $value) {
+            $this->assertStringNotContainsString($value, $logs);
+        }
+        WSZ_PayNL_Gateway_Integration::record_transaction($order, 'renewal', 'EX-6582-4371-5560', 50, 10487);
+        $this->assertStringContainsString('EX-6582-4371-5560', json_encode(WSZ_PayNL_Gateway_Integration::get_transactions(10487, 10)));
+    }
+
+    public function test_provider_error_and_custom_endpoint_cannot_log_credentials_or_bank_details(): void
+    {
+        $GLOBALS['wsz_test_filters'] = array();
+        $GLOBALS['wsz_paynl_test_plugin_credentials'] = array('token_code' => 'AT-1234-5678', 'api_token' => 'mock-api-password', 'service_id' => 'SL-1234-5678');
+        $sensitive = array('mock-api-password', 'VY-9212-9171-2390', 'NL91ABNA0417164300', base64_encode('AT-1234-5678:mock-api-password'));
+        $GLOBALS['wsz_paynl_test_http_response'] = array('response' => array('code' => 400), 'body' => json_encode(array(
+            'request' => array('result' => 0, 'errorId' => 'PAY-1404', 'errorMessage' => 'Rejected: ' . implode(' ', $sensitive)),
+            'payment' => array('bankMessage' => 'Bank data: ' . implode(' ', $sensitive)),
+        )));
+        add_filter('wsz_subs_paynl_authorize_endpoint', static fn () => 'https://payment.pay.nl/v1/Payment/authorize/json?credential=mock-api-password');
+        try {
+            $order = $this->createMock(WC_Order::class); $order->method('get_id')->willReturn(10488); $order->method('get_payment_method')->willReturn('pay_gateway_visa');
+            $sub = $this->createMock(WC_Order::class); $sub->method('get_id')->willReturn(10487);
+            $result = (new WSZ_PayNL_Gateway_Integration())->charge_recurring_payment('VY-9212-9171-2390', 12.34, 'EUR', $order, $sub);
+            $serialized = json_encode(array($result, $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs']));
+            $this->assertFalse($result['paid']);
+            foreach ($sensitive as $secret) { $this->assertStringNotContainsString($secret, $serialized); }
+            $this->assertStringContainsString('PAY-1404', $serialized);
+        } finally {
+            unset($GLOBALS['wsz_test_filters']);
+        }
+    }
+
     public function test_paynl_recurring_charge_logs_declined_response_details(): void
     {
         $GLOBALS['wsz_paynl_test_plugin_credentials'] = array(
@@ -903,7 +963,7 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $logs = $GLOBALS['wsz_admin_test_options']['wsz_subs_diagnostic_logs'] ?? array();
 
         $this->assertFalse($result['paid']);
-        $this->assertSame('No rights to perform this action', $result['message'] ?? '');
+        $this->assertSame('PAY.nl recurring charge was not approved.', $result['message'] ?? '');
         $this->assertSame('PAY.nl recurring charge was not approved.', $logs[0]['message'] ?? '');
         $this->assertSame('warning', $logs[0]['level'] ?? '');
         $this->assertSame('10488', $logs[0]['context']['renewal_order_id'] ?? '');
@@ -918,8 +978,8 @@ final class PayNLGatewayIntegrationTest extends TestCase
         $this->assertSame('WSZ-R10488', $logs[0]['context']['request_reference'] ?? '');
         $this->assertSame('200', $logs[0]['context']['status_code'] ?? '');
         $this->assertSame('PAY-1404', $logs[0]['context']['request_error_id'] ?? '');
-        $this->assertSame('permissionDenied', $logs[0]['context']['request_error_tag'] ?? '');
-        $this->assertSame('No rights to perform this action', $logs[0]['context']['request_error_message'] ?? '');
+        $this->assertArrayNotHasKey('request_error_tag', $logs[0]['context']);
+        $this->assertArrayNotHasKey('request_error_message', $logs[0]['context']);
     }
 
     public function test_paynl_recurring_charge_logs_warning_when_paid_response_has_no_transaction_id(): void

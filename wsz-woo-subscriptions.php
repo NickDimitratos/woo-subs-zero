@@ -3,7 +3,7 @@
  * Plugin Name: Woo Subs-Zero
  * Plugin URI: https://ndimitratos.com
  * Description: Deterministic, gateway-agnostic subscription management for WooCommerce.
- * Version: 0.1.54
+ * Version: 0.1.59
  * Requires at least: 6.4
  * Requires PHP: 8.1
  * License: GPL-2.0-or-later
@@ -11,6 +11,7 @@
  * Author: Nick Dimitratos
  * Author URI: https://ndimitratos.com
  * Text Domain: woo-subzero
+ * Domain Path: /languages
  * WC requires at least: 8.8
  * WC tested up to: 9.0
  */
@@ -23,8 +24,12 @@ if (defined('WSZ_WOO_SUBZERO_BOOTSTRAP_LOADED')) {
 
 define('WSZ_WOO_SUBZERO_BOOTSTRAP_LOADED', true);
 
+add_action('init', static function () {
+    load_plugin_textdomain('woo-subzero', false, dirname(plugin_basename(__FILE__)) . '/languages');
+});
+
 if (!defined('WSZ_WOO_SUBZERO_VERSION')) {
-    define('WSZ_WOO_SUBZERO_VERSION', '0.1.54');
+    define('WSZ_WOO_SUBZERO_VERSION', '0.1.59');
 }
 
 if (!defined('WSZ_WOO_SUBZERO_FILE')) {

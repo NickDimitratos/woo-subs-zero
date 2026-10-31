@@ -23,46 +23,111 @@ class WSZ_Webhook_Handler
     public function handle_gateway_exchange(): void
     {
         $payload = $this->read_exchange_payload();
-        $order = $this->resolve_order_from_payload($payload);
+        $raw = class_exists('WSZ_PayNL_Gateway_Integration') ? WSZ_PayNL_Gateway_Integration::raw_token_exchange_body() : '';
+        $body_payload = class_exists('WSZ_PayNL_Gateway_Integration') ? WSZ_PayNL_Gateway_Integration::token_payload_from_body($raw) : array();
+        if ($this->is_token_exchange_payload($body_payload)) {
+            $payload = $body_payload;
+        }
+        $token_event = $this->is_token_exchange_payload($payload);
+        $integration = $token_event && class_exists('WSZ_PayNL_Gateway_Integration')
+            ? new WSZ_PayNL_Gateway_Integration($this->subscription_manager) : null;
+        $order = $integration ? $integration->resolve_order_from_token_exchange($payload) : $this->resolve_order_from_payload($payload);
+        $body = '' !== $raw ? json_decode($raw, true) : null;
+        if (!$token_event && is_array($body) && 'order' === ($body['type'] ?? null) && isset($body['object']) && is_array($body['object'])
+            && class_exists('WSZ_PayNL_Gateway_Integration')) {
+            // Prefer the body for lookup, but do not trust it until its signature is checked.
+            $body_order = $this->resolve_order_from_payload($body_payload);
+            if ($body_order instanceof WC_Order && WSZ_PayNL_Gateway_Integration::is_paynl_gateway_id((string) $body_order->get_payment_method())) {
+                $order = $body_order;
+                $payload = $body_payload;
+            }
+        }
 
         if (!($order instanceof WC_Order)) {
+            if ($integration) {
+                WSZ_PayNL_Gateway_Integration::respond_token_exchange(false, 'token_order_not_found', 503);
+            }
             $this->respond_true('order_not_found');
         }
 
-        $idempotency_key = $this->build_idempotency_key($order, $payload);
-
-        if ($this->is_replayed_webhook($idempotency_key)) {
-            $this->respond_true('duplicate');
+        if ('wsz_paynl_sepa' === $order->get_payment_method()
+            || '' !== $order->get_meta('_wsz_paynl_sepa_state', true)
+            || '' !== $order->get_meta('_wsz_paynl_sepa_authorization', true)) {
+            // A checkout order key or generic card verifier is not bank settlement evidence.
+            $this->respond_true('sepa_requires_verified_bank_exchange');
         }
 
-        if ($this->is_token_exchange_payload($payload)) {
-            $this->mark_webhook_processed($idempotency_key);
-
+        $is_token = $this->is_token_exchange_payload($payload);
+        if ($is_token) {
+            $verified = $integration ? $integration->verified_token_exchange_payload($order, $raw, WSZ_PayNL_Gateway_Integration::token_exchange_headers()) : null;
+            if (!is_array($verified)) {
+                if (class_exists('WSZ_PayNL_Gateway_Integration')) {
+                    WSZ_PayNL_Gateway_Integration::respond_token_exchange(false, 'token_not_verified');
+                }
+                $this->respond_true('token_not_verified');
+            }
+            $payload = $verified;
+        }
+        if ($is_token) {
+            $idempotency_key = $this->build_idempotency_key($order, $payload);
+            if ($this->is_replayed_webhook($idempotency_key)) {
+                WSZ_PayNL_Gateway_Integration::respond_token_exchange(true, 'duplicate');
+            }
             $token_id = $this->store_recurring_payment_token($order, $payload);
-            $this->respond_true($token_id > 0 ? 'token_saved' : 'token_not_saved');
+            if ($token_id > 0) {
+                $this->mark_webhook_processed($idempotency_key);
+            }
+            WSZ_PayNL_Gateway_Integration::respond_token_exchange($token_id > 0, $token_id > 0 ? 'token_saved' : 'token_not_saved', $token_id > 0 ? 200 : 503);
         }
 
         $verified_paid = apply_filters('wsz_subs_verify_gateway_exchange', null, $payload, $order);
+        $is_paynl = class_exists('WSZ_PayNL_Gateway_Integration')
+            && WSZ_PayNL_Gateway_Integration::is_paynl_gateway_id((string) $order->get_payment_method());
+        $is_paynl_json_order = $is_paynl && is_array($body) && 'order' === ($body['type'] ?? null);
 
         if (!is_bool($verified_paid)) {
-            if (!$this->is_order_key_valid($order, $payload)) {
-                $this->respond_true('invalid_order_key');
-            }
+            if ($is_paynl) {
+                $integration = new WSZ_PayNL_Gateway_Integration($this->subscription_manager);
+                $status = $integration->verified_order_exchange_status($order, $raw, WSZ_PayNL_Gateway_Integration::token_exchange_headers());
+                if ('pending' === $status) {
+                    $this->respond_gateway_result($is_paynl_json_order, true, 'pending');
+                }
+                if (!in_array($status, array('paid', 'failed'), true)) {
+                    $this->respond_gateway_result($is_paynl_json_order, false, 'paynl_requires_verified_exchange');
+                }
+                $verified_paid = 'paid' === $status;
+                // Idempotency is keyed to verified body data and to the final payment state.
+                $payload = $body_payload;
+                $payload['state'] = $verified_paid ? 'paynl_paid' : 'paynl_failed';
+            } else {
+                if (!$this->is_order_key_valid($order, $payload)) {
+                    $this->respond_true('invalid_order_key');
+                }
 
-            $verified_paid = $this->fallback_paid_check($payload);
+                $verified_paid = $this->fallback_paid_check($payload);
+            }
         }
 
-        $this->mark_webhook_processed($idempotency_key);
+        $idempotency_key = $this->build_idempotency_key($order, $payload);
+        if ($this->is_replayed_webhook($idempotency_key)) {
+            $this->respond_gateway_result($is_paynl_json_order, true, 'duplicate');
+        }
 
         if ($verified_paid) {
             $this->apply_paid_exchange_to_order($order, $payload);
             $this->activate_order_subscriptions($order);
-            $this->respond_true('paid');
+            $this->mark_webhook_processed($idempotency_key);
+            $this->respond_gateway_result($is_paynl_json_order, true, 'paid');
         }
 
+        if ($is_paynl && $order->is_paid()) {
+            $this->mark_webhook_processed($idempotency_key);
+            $this->respond_gateway_result($is_paynl_json_order, true, 'already_paid');
+        }
         $order->update_status('failed', __('Gateway exchange verification indicated unpaid state.', 'woo-subzero'));
         $this->hold_order_subscriptions($order);
-        $this->respond_true('not_paid');
+        $this->mark_webhook_processed($idempotency_key);
+        $this->respond_gateway_result($is_paynl_json_order, true, 'not_paid');
     }
 
     private function activate_order_subscriptions(WC_Order $order): void
@@ -346,6 +411,10 @@ class WSZ_Webhook_Handler
                 : 'pay_gateway_creditcardsgrouped';
         }
 
+        if (!class_exists('WSZ_PayNL_Gateway_Integration') || !WSZ_PayNL_Gateway_Integration::is_supported_gateway_id($gateway_id)) {
+            return 0;
+        }
+
         $customer_id = (int) $order->get_customer_id();
         $token_id = $this->find_existing_recurring_token_id($customer_id, $gateway_id, $recurring_id);
 
@@ -437,6 +506,10 @@ class WSZ_Webhook_Handler
                 continue;
             }
 
+            if (!WSZ_PayNL_Gateway_Integration::can_sync_parent_payment_context($order, $subscription)) {
+                continue;
+            }
+
             $this->subscription_manager->set_payment_token_id($subscription, $token_id);
             $subscription->set_payment_method($gateway_id);
             $subscription->save();
@@ -519,5 +592,26 @@ class WSZ_Webhook_Handler
 
         echo 'TRUE|' . sanitize_text_field($message);
         exit;
+    }
+
+    private function respond_unverified(string $message): void
+    {
+        if (!headers_sent()) {
+            status_header(503);
+            header('Content-Type: text/plain; charset=utf-8');
+        }
+        echo 'FALSE|' . sanitize_text_field($message);
+        exit;
+    }
+
+    private function respond_gateway_result(bool $json, bool $accepted, string $message): void
+    {
+        if ($json) {
+            WSZ_PayNL_Gateway_Integration::respond_token_exchange($accepted, $message, $accepted ? 200 : 503);
+        }
+        if ($accepted) {
+            $this->respond_true($message);
+        }
+        $this->respond_unverified($message);
     }
 }

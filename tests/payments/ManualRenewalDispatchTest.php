@@ -172,7 +172,7 @@ final class ManualRenewalDispatchTest extends TestCase
 
         $subscription = $this->createMock(WC_Order::class);
         $subscription
-            ->expects($this->once())
+            ->expects($this->exactly(2))
             ->method('get_payment_method')
             ->willReturn('stripe');
 

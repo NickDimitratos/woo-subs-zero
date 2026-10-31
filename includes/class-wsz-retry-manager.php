@@ -72,6 +72,11 @@ class WSZ_Retry_Manager
             return false;
         }
 
+        if ($this->subscription_manager->has_completed_all_payments($subscription)
+            || 'yes' === $renewal_order->get_meta('_wsz_async_payment_pending', true) || '' !== $renewal_order->get_meta('_wsz_paynl_sepa_state', true)) {
+            return false; // Fully paid plans and accepted/uncertain bank collections must never be retried.
+        }
+
         $settings = (array) get_option('wsz_subs_options', array());
         $retries_enabled = $settings['enable_retries'] ?? 'yes';
 
@@ -182,6 +187,11 @@ class WSZ_Retry_Manager
         }
 
         try {
+            if ($this->subscription_manager->has_completed_all_payments($subscription)
+                || 'yes' === $renewal_order->get_meta('_wsz_async_payment_pending', true) || '' !== $renewal_order->get_meta('_wsz_paynl_sepa_state', true)) {
+                $this->cancel_pending_retries($renewal_order);
+                return;
+            }
             if (!$this->is_retry_eligible($subscription, $renewal_order, $attempt)) {
                 $this->update_retry_record($renewal_order, $attempt, 'cancelled', 0, 'not_eligible');
                 $this->log_retry_event(
@@ -231,6 +241,14 @@ class WSZ_Retry_Manager
 
                 do_action('wsz_subs_retry_payment_complete', $subscription, $renewal_order, $attempt);
 
+                return;
+            }
+
+            if ($this->subscription_manager->is_manual_renewal($subscription)) {
+                $this->update_retry_record($renewal_order, $attempt, 'cancelled', 0, 'manual_renewal_required');
+                $this->cancel_pending_retries($renewal_order);
+                $this->safe_transition_subscription_status($subscription, $renewal_order, $attempt);
+                do_action('wsz_subs_manual_renewal_pending_payment', $subscription, $renewal_order);
                 return;
             }
 

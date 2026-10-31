@@ -81,7 +81,7 @@ class WSZ_Early_Renewal_Manager
             return false;
         }
 
-        if (!($subscription instanceof WC_Order)) {
+        if (!($subscription instanceof WC_Order) || $this->subscription_manager->has_completed_all_payments($subscription)) {
             return false;
         }
 

@@ -1,0 +1,65 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Woo Subs-Zero\n"
+"Language: nl_NL\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Your subscription renewal is ready to pay"
+msgstr "Uw abonnementsverlenging staat klaar om te betalen"
+
+msgid "Reminder: your subscription renewal is awaiting payment"
+msgstr "Herinnering: uw abonnementsverlenging wacht op betaling"
+
+msgid "Your renewal is ready"
+msgstr "Uw verlenging staat klaar"
+
+msgid "Your renewal is still awaiting payment"
+msgstr "Uw verlenging wacht nog op betaling"
+
+msgid "Your subscription renewal is ready for payment."
+msgstr "Uw abonnementsverlenging staat klaar om te betalen."
+
+msgid "This is a reminder that your subscription renewal is still awaiting payment."
+msgstr "Dit is een herinnering dat uw abonnementsverlenging nog op betaling wacht."
+
+msgid "Hello %s,"
+msgstr "Hallo %s,"
+
+msgid "Hello,"
+msgstr "Hallo,"
+
+msgid "Subscription renewal"
+msgstr "Abonnementsverlenging"
+
+msgid "Renewal details"
+msgstr "Verlengingsgegevens"
+
+msgid "Subscription"
+msgstr "Abonnement"
+
+msgid "Payment"
+msgstr "Betaling"
+
+msgid "Remaining after this payment"
+msgstr "Resterend na deze betaling"
+
+msgid "Contract number"
+msgstr "Contractnummer"
+
+msgid "Amount due"
+msgstr "Te betalen bedrag"
+
+msgid "Renew Now"
+msgstr "Nu verlengen"
+
+msgid "Renew Now:"
+msgstr "Nu verlengen:"
+
+msgid "You received this email because a subscription renewal is awaiting payment."
+msgstr "U ontvangt deze e-mail omdat een abonnementsverlenging op betaling wacht."
+
+msgid "Subscription #%1$d — amount due: %2$s"
+msgstr "Abonnement #%1$d — te betalen bedrag: %2$s"

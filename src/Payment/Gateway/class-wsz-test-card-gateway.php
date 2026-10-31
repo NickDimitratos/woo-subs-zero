@@ -13,6 +13,7 @@ class WSZ_Test_Card_Gateway_Integration
     public function init(): void
     {
         add_filter('woocommerce_payment_gateways', array($this, 'register_gateway'));
+        add_filter('wsz_subs_automatic_renewal_gateway_ids', array($this, 'register_automatic_gateway'));
         add_action(
             'woocommerce_scheduled_subscription_payment_' . self::GATEWAY_ID,
             array($this, 'process_scheduled_payment'),
@@ -26,6 +27,15 @@ class WSZ_Test_Card_Gateway_Integration
                 return array_values(array_unique(array_merge($supports, self::required_supports_flags())));
             }
         );
+    }
+
+    public function register_automatic_gateway(array $gateway_ids): array
+    {
+        $settings = function_exists('get_option') ? get_option('woocommerce_' . self::GATEWAY_ID . '_settings', array()) : array();
+        if (is_array($settings) && 'yes' === ($settings['enabled'] ?? 'no')) {
+            $gateway_ids[] = self::GATEWAY_ID;
+        }
+        return array_values(array_unique($gateway_ids));
     }
 
     /**
