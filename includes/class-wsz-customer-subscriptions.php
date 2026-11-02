@@ -176,6 +176,95 @@ final class WSZ_Customer_Subscriptions
         return 'eligible';
     }
 
+    /** Only offer recovery when the known retry sequence has finished and the debt is unambiguous. */
+    public function manual_recovery_eligibility($order): string
+    {
+        $state = $this->admin_payment_eligibility($order);
+        if ('automatic_renewal' !== $state) return $state;
+        if ('failed' !== $order->get_status() || !is_email((string) $order->get_billing_email())) return 'recovery_review';
+        $subscription = $this->manager->get_subscription((int) $order->get_meta('_wsz_subscription_id', true));
+        if (!($subscription instanceof WC_Order) || $this->manager->has_completed_all_payments($subscription)
+            || (int) $subscription->get_meta('_wsz_pending_renewal_order_id', true) > 0
+            || '' !== (string) $subscription->get_meta('_wsz_paynl_sepa_authorization', true)
+            || '' !== (string) $subscription->get_meta('_wsz_paynl_sepa_mandate_state', true)) return 'recovery_review';
+        $records = json_decode((string) $order->get_meta('_wsz_retry_records', true), true);
+        if (!is_array($records) || !$records || count($records) > 100) return 'recovery_review';
+        $latest_attempt = 0;
+        $exhausted = false;
+        foreach ($records as $attempt => $record) {
+            if (!ctype_digit((string) $attempt) || (int) $attempt < 1 || !is_array($record)
+                || !in_array($record['status'] ?? '', array('failed', 'cancelled', 'complete'), true)) return 'recovery_review';
+            if ((int) $attempt > $latest_attempt) {
+                $latest_attempt = (int) $attempt;
+                $exhausted = 'failed' === ($record['status'] ?? '') && 'retry_rules_exhausted' === ($record['reason'] ?? '');
+            }
+        }
+        if (!$exhausted) return 'recovery_review';
+        foreach ($this->manager->get_related_orders($subscription, 'renewal') as $related_id) {
+            if ((int) $related_id === (int) $order->get_id()) continue;
+            $related = wc_get_order((int) $related_id);
+            if (!($related instanceof WC_Order) || $related->needs_payment() || 'on-hold' === $related->get_status()) return 'recovery_review';
+        }
+        return 'recovery_ready';
+    }
+
+    public function enable_manual_recovery(int $order_id): string
+    {
+        $order = wc_get_order($order_id);
+        if ('recovery_ready' !== $this->manual_recovery_eligibility($order)) return 'recovery_review';
+        $subscription_id = (int) $order->get_meta('_wsz_subscription_id', true);
+        if (!$this->manager->acquire_lock('renewal', $subscription_id, 300)) return 'busy';
+        $locked = array();
+        try {
+            $records = json_decode((string) $order->get_meta('_wsz_retry_records', true), true);
+            foreach (array_keys($records) as $attempt) {
+                if (!$this->manager->acquire_lock('retry_' . $order_id, (int) $attempt, 300)) return 'busy';
+                $locked[] = (int) $attempt;
+            }
+            $fresh = wc_get_order($order_id);
+            if ('recovery_ready' !== $this->manual_recovery_eligibility($fresh)
+                || (int) $fresh->get_meta('_wsz_subscription_id', true) !== $subscription_id) return 'recovery_review';
+            $fresh_records = json_decode((string) $fresh->get_meta('_wsz_retry_records', true), true);
+            foreach (array_keys($fresh_records) as $attempt) {
+                if (!in_array((int) $attempt, $locked, true)) return 'busy';
+            }
+            $subscription = $this->manager->get_subscription($subscription_id);
+            if (!($subscription instanceof WC_Order)) return 'recovery_review';
+            $this->manager->set_manual_renewal($subscription, true);
+            $subscription->add_order_note(__('Administrator switched to manual renewal for an unpaid renewal order.', 'woo-subzero'));
+            return 'manual_enabled';
+        } finally {
+            foreach ($locked as $attempt) $this->manager->release_lock('retry_' . $order_id, $attempt);
+            $this->manager->release_lock('renewal', $subscription_id);
+        }
+    }
+
+    /** Record mailer acceptance or failure, without changing the outcome of the send. */
+    private function attempt_payment_email(WC_Order $order, string $type, callable $send): bool
+    {
+        try {
+            $accepted = (bool) $send();
+        } catch (Throwable $error) {
+            $this->record_payment_email_attempt($order, $type, false);
+            throw $error;
+        }
+        $this->record_payment_email_attempt($order, $type, $accepted);
+        return $accepted;
+    }
+
+    private function record_payment_email_attempt(WC_Order $order, string $type, bool $accepted): void
+    {
+        try {
+            $history = $order->get_meta('_wsz_manual_email_history', true);
+            $history = is_array($history) ? $history : array();
+            $history[] = array('type' => $type, 'result' => $accepted ? 'accepted' : 'failed', 'time' => time());
+            $order->update_meta_data('_wsz_manual_email_history', $history);
+            $order->save();
+        } catch (Throwable $error) {
+            wc_get_logger()->warning('Could not record renewal email activity.', array('source' => 'woo-subzero'));
+        }
+    }
+
     /** Explicit admin action; it does not start a backdated reminder schedule. */
     public function send_admin_payment_email(int $order_id): string
     {
@@ -209,7 +298,7 @@ final class WSZ_Customer_Subscriptions
                 return $eligibility;
             }
             $subscription = $this->manager->get_subscription((int) $order->get_meta('_wsz_subscription_id', true));
-            if (!$email->trigger($subscription, $order)) {
+            if (!$this->attempt_payment_email($order, 'admin', static function () use ($email, $subscription, $order) { return $email->trigger($subscription, $order); })) {
                 $order->add_order_note(__('The admin-requested renewal payment email could not be sent.', 'woo-subzero'));
                 return 'send_failed';
             }
@@ -273,11 +362,11 @@ final class WSZ_Customer_Subscriptions
                 if (!$notification->is_enabled()) {
                     return;
                 }
-                $sent = $notification->trigger($subscription, $order);
+                $sent = $this->attempt_payment_email($order, 'initial', static function () use ($notification, $subscription, $order) { return $notification->trigger($subscription, $order); });
             } else {
                 // Minimal WordPress environments may not initialize the WooCommerce mailer.
                 $message = WSZ_Renewal_Email_Template::html($subscription, $order, __('Your renewal is ready', 'woo-subzero'));
-                $sent = wp_mail($email, __('Your subscription renewal is ready to pay', 'woo-subzero'), $message, array('Content-Type: text/html; charset=UTF-8'));
+                $sent = $this->attempt_payment_email($order, 'initial', static function () use ($email, $message) { return wp_mail($email, __('Your subscription renewal is ready to pay', 'woo-subzero'), $message, array('Content-Type: text/html; charset=UTF-8')); });
             }
             if ($sent) {
                 $order->update_meta_data('_wsz_manual_renewal_notice_sent', 'yes');
@@ -387,7 +476,7 @@ final class WSZ_Customer_Subscriptions
                 return;
             }
             $attempted = true;
-            $sent = $notification->trigger($subscription, $fresh);
+            $sent = $this->attempt_payment_email($fresh, 'reminder', static function () use ($notification, $subscription, $fresh) { return $notification->trigger($subscription, $fresh); });
             $attempted = false;
             if ($sent) {
                 $fresh->update_meta_data('_wsz_manual_reminder_sent', 'yes');

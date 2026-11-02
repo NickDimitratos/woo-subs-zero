@@ -123,6 +123,9 @@ final class ManualRenewalExperienceTest extends TestCase
         self::assertStringContainsString('>Renew Now</a>', $GLOBALS['wsz_manual_test_mail'][0]['message']);
         self::assertStringContainsString('#111827', $GLOBALS['wsz_manual_test_mail'][0]['message']);
         self::assertSame('yes', $order->get_meta('_wsz_manual_renewal_notice_sent', true));
+        $history = $order->get_meta('_wsz_manual_email_history', true);
+        self::assertSame('initial', $history[0]['type'] ?? null);
+        self::assertSame('accepted', $history[0]['result'] ?? null);
     }
 
     public function test_email_template_escapes_customer_content_and_preserves_plain_text_link(): void

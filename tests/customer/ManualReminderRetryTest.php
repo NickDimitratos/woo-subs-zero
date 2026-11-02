@@ -14,6 +14,8 @@ final class ManualReminderRetryTest extends TestCase
         $result=$this->scenario('success');
         self::assertSame(2,$result['attempts']);
         self::assertSame('yes',$result['meta']['_wsz_manual_reminder_sent']??'');
+        self::assertSame(['failed','accepted'],array_column($result['meta']['_wsz_manual_email_history']??[],'result'));
+        self::assertSame(['reminder','reminder'],array_column($result['meta']['_wsz_manual_email_history']??[],'type'));
         self::assertCount(0,$result['scheduled']);
     }
     public function test_retries_stop_after_three_additional_attempts(): void
@@ -34,7 +36,7 @@ final class ManualReminderRetryTest extends TestCase
     }
     public function test_transport_exception_is_retried(): void
     {
-        $result=$this->scenario('exception');self::assertSame(2,$result['attempts']);self::assertSame('yes',$result['meta']['_wsz_manual_reminder_sent']??'');
+        $result=$this->scenario('exception');self::assertSame(2,$result['attempts']);self::assertSame('yes',$result['meta']['_wsz_manual_reminder_sent']??'');self::assertSame(['failed','accepted'],array_column($result['meta']['_wsz_manual_email_history']??[],'result'));
     }
     public function test_retry_scheduling_failure_is_noted(): void
     {

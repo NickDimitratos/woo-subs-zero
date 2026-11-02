@@ -175,18 +175,15 @@ class WSZ_Retry_Manager
 
     public function process_retry(int $subscription_id, int $order_id, int $attempt): void
     {
-        $subscription = $this->subscription_manager->get_subscription($subscription_id);
-        $renewal_order = wc_get_order($order_id);
-
-        if (!($subscription instanceof WC_Order) || !($renewal_order instanceof WC_Order)) {
-            return;
-        }
-
         if (!$this->subscription_manager->acquire_lock('retry_' . $order_id, $attempt, 300)) {
             return;
         }
 
         try {
+            // Load after locking so another process cannot leave this worker with stale state.
+            $subscription = $this->subscription_manager->get_subscription($subscription_id);
+            $renewal_order = wc_get_order($order_id);
+            if (!($subscription instanceof WC_Order) || !($renewal_order instanceof WC_Order)) return;
             if ($this->subscription_manager->has_completed_all_payments($subscription)
                 || 'yes' === $renewal_order->get_meta('_wsz_async_payment_pending', true) || '' !== $renewal_order->get_meta('_wsz_paynl_sepa_state', true)) {
                 $this->cancel_pending_retries($renewal_order);

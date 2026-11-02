@@ -9,10 +9,13 @@ All notable changes to this project are documented in this file.
 - Added an Unpaid Renewals admin list and an individual payment-email action with eligibility checks for existing manual renewal orders.
 - Added customer account access to manual renewals, configurable renewal and reminder emails, optional finite-plan payment progress and a generic contract reference integration hook.
 - Added Dutch translations for renewal and reminder email text and a compatibility fallback for email previews.
+- Show the stored payment method on subscription and unpaid-renewal lists, and record timestamped manual payment-email and reminder attempts for the unpaid-renewal history.
+- Allow administrators to switch eligible failed renewals with exhausted retries to manual renewal before separately sending a payment email; block ambiguous or in-progress payment cases.
 
 ### Notes
 
 - Reminder delivery depends on Action Scheduler and the store's email transport. Failed reminder sends are retried up to three times at one-hour intervals; exhausted retries and scheduling failures are recorded on the renewal order.
+- Mailer acceptance does not confirm inbox delivery. Earlier email activity may be incomplete; switching a subscription to manual changes its future renewal mode.
 
 ## [0.1.58] - 2026-10-27
 

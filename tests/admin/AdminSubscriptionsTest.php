@@ -466,11 +466,37 @@ final class AdminSubscriptionsTest extends TestCase
         );
 
         $this->assertArrayHasKey('order_number', $columns);
+        $this->assertArrayHasKey('wsz_payment_method', $columns);
         $this->assertArrayHasKey('wsz_next_renewal', $columns);
         $this->assertArrayHasKey('wsz_renewal_orders', $columns);
         $this->assertArrayHasKey('wsz_last_card_tx', $columns);
         $this->assertArrayNotHasKey('billing_address', $columns);
         $this->assertArrayNotHasKey('order_total', $columns);
+    }
+
+    public function test_payment_method_column_displays_saved_method_or_fallback(): void
+    {
+        foreach (array(
+            array('Visa', 'pay_gateway_visa', 'Visa'),
+            array('', 'custom_gateway', 'custom_gateway'),
+            array('', '', 'Not set'),
+        ) as $case) {
+            $subscription = $this->createMock(WC_Order::class);
+            $subscription->method('get_id')->willReturn(44);
+            $subscription->method('get_payment_method_title')->willReturn($case[0]);
+            $subscription->method('get_payment_method')->willReturn($case[1]);
+            $manager = $this->createMock(WSZ_Subscription_Manager::class);
+            $manager->method('get_subscription')->with(44)->willReturn($subscription);
+            $admin = new WSZ_Admin_Subscriptions($manager);
+
+            ob_start();
+            $admin->render_subscription_hpos_custom_column('wsz_payment_method', $subscription);
+            $this->assertSame($case[2], ob_get_clean());
+
+            ob_start();
+            $admin->render_subscription_list_custom_column('wsz_payment_method', 44);
+            $this->assertSame($case[2], ob_get_clean());
+        }
     }
 
     public function test_render_card_transactions_meta_box_displays_test_card_and_paynl_transactions(): void
