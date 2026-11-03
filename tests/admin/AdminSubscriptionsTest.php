@@ -466,11 +466,37 @@ final class AdminSubscriptionsTest extends TestCase
         );
 
         $this->assertArrayHasKey('order_number', $columns);
+        $this->assertArrayHasKey('wsz_payment_method', $columns);
         $this->assertArrayHasKey('wsz_next_renewal', $columns);
         $this->assertArrayHasKey('wsz_renewal_orders', $columns);
         $this->assertArrayHasKey('wsz_last_card_tx', $columns);
         $this->assertArrayNotHasKey('billing_address', $columns);
         $this->assertArrayNotHasKey('order_total', $columns);
+    }
+
+    public function test_payment_method_column_displays_saved_method_or_fallback(): void
+    {
+        foreach (array(
+            array('Visa', 'pay_gateway_visa', 'Visa'),
+            array('', 'custom_gateway', 'custom_gateway'),
+            array('', '', 'Not set'),
+        ) as $case) {
+            $subscription = $this->createMock(WC_Order::class);
+            $subscription->method('get_id')->willReturn(44);
+            $subscription->method('get_payment_method_title')->willReturn($case[0]);
+            $subscription->method('get_payment_method')->willReturn($case[1]);
+            $manager = $this->createMock(WSZ_Subscription_Manager::class);
+            $manager->method('get_subscription')->with(44)->willReturn($subscription);
+            $admin = new WSZ_Admin_Subscriptions($manager);
+
+            ob_start();
+            $admin->render_subscription_hpos_custom_column('wsz_payment_method', $subscription);
+            $this->assertSame($case[2], ob_get_clean());
+
+            ob_start();
+            $admin->render_subscription_list_custom_column('wsz_payment_method', 44);
+            $this->assertSame($case[2], ob_get_clean());
+        }
     }
 
     public function test_render_card_transactions_meta_box_displays_test_card_and_paynl_transactions(): void
@@ -567,6 +593,26 @@ final class AdminSubscriptionsTest extends TestCase
         $this->assertStringContainsString('Subscription Status:', $output);
         $this->assertStringContainsString('active', $output);
         $this->assertStringContainsString('Subscription profile values only (meta keys)', $output);
+    }
+
+    public function test_subscription_meta_box_does_not_dump_encrypted_bank_authorization(): void
+    {
+        $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_id')->willReturn(44);
+        $subscription->method('get_status')->willReturn('active');
+        $subscription->method('get_meta_data')->willReturn(array(
+            new class {
+                public function get_data() { return array('key' => '_wsz_paynl_sepa_authorization', 'value' => 'MOCK-ENCRYPTED-BANK-AUTHORIZATION-BLOB'); }
+            },
+        ));
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('get_subscription')->willReturn($subscription);
+        $post = new WP_Post(); $post->ID = 44;
+        ob_start();
+        (new WSZ_Admin_Subscriptions($manager))->render_subscription_meta_keys_meta_box($post);
+        $output = (string) ob_get_clean();
+        $this->assertStringNotContainsString('MOCK-ENCRYPTED-BANK-AUTHORIZATION-BLOB', $output);
+        $this->assertStringContainsString('Encrypted SEPA authorization stored.', $output);
     }
 
     public function test_render_upcoming_renewals_meta_box_auto_recovers_due_active_subscription(): void

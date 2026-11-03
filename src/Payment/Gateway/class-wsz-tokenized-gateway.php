@@ -104,6 +104,10 @@ class WSZ_Tokenized_Gateway
             return;
         }
 
+        if ($this->payment_handler->maybe_handle_manual_only_paynl_renewal($subscription, $renewal_order)) {
+            return;
+        }
+
         $token = $this->payment_handler->get_payment_token_for_subscription($subscription);
 
         if (!($token instanceof WC_Payment_Token)) {

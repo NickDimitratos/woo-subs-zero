@@ -93,6 +93,9 @@ jobs:
       - name: Run PHPUnit
         run: composer run test
 
+      - name: Check checkout policy and email previews
+        run: node --test tests/checkout/paynl-block-checkout.test.js tests/admin/email-preview.test.js
+
       - name: Install production dependencies for package
         if: ${{ hashFiles('composer.json') != '' }}
         run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction
@@ -118,7 +121,18 @@ jobs:
             --exclude '.github/' \
             --exclude '.phpunit.cache/' \
             --exclude 'tests/' \
-            --exclude 'docs/' \
+            --include 'docs/' \
+            --include 'docs/assets/' \
+            --include 'docs/assets/readme-hero.png' \
+            --include 'docs/sections/' \
+            --include 'docs/sections/*.md' \
+            --include 'docs/README.md' \
+            --include 'docs/features-list.md' \
+            --include 'docs/operations-playbook.md' \
+            --include 'docs/paynl-sepa.md' \
+            --include 'docs/subscription-combinations.md' \
+            --include 'docs/tested-scenarios.md' \
+            --exclude 'docs/***' \
             --exclude 'phpunit.xml.dist' \
             --exclude '.gitignore' \
             --exclude '.DS_Store' \

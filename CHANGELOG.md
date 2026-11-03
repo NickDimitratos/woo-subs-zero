@@ -2,6 +2,89 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.59] - 2026-10-31
+
+### Added
+
+- Added an Unpaid Renewals admin list and an individual payment-email action with eligibility checks for existing manual renewal orders.
+- Added customer account access to manual renewals, configurable renewal and reminder emails, optional finite-plan payment progress and a generic contract reference integration hook.
+- Added Dutch translations for renewal and reminder email text and a compatibility fallback for email previews.
+- Show the stored payment method on subscription and unpaid-renewal lists, and record timestamped manual payment-email and reminder attempts for the unpaid-renewal history.
+- Allow administrators to switch eligible failed renewals with exhausted retries to manual renewal before separately sending a payment email; block ambiguous or in-progress payment cases.
+
+### Notes
+
+- Reminder delivery depends on Action Scheduler and the store's email transport. Failed reminder sends are retried up to three times at one-hour intervals; exhausted retries and scheduling failures are recorded on the renewal order.
+- Mailer acceptance does not confirm inbox delivery. Earlier email activity may be incomplete; switching a subscription to manual changes its future renewal mode.
+
+## [0.1.58] - 2026-10-27
+
+### Fixed
+
+- Recheck locked renewal and bank-payment state before dispatch, reject stale schedule keys, refresh gateway fallback state, preserve paid manual renewals, and preserve suspended PAY.nl SEPA subscriptions when a late bank confirmation arrives. Explicit reactivation schedules the next cycle; Stripe/Mollie and retry behavior are retained.
+- Resolve first bank callbacks without the provider's optional `extra1` using an untrusted order hint plus authenticated debit and mandate checks. Recognize rejection 97, hold late success after failure for review, and avoid declaring a 404 mandate deletion successful.
+- Bind bank authorizations to the parent order’s actual subscription IDs, and bind requests and reconciliation to the authorized Sales Location and environment. Test mode blocks status/revocation requests to live mandates as well as collection requests. PAY.nl's cached option 137 controls new iDEAL-to-SEPA checkout availability when the native gateway provides it.
+- Do not present disabled PAY.nl card-token adapters as automatic gateways. Explicit custom token adapters remain supported. Merchant-approved SEPA consent wording can be customized and empty wording disables checkout.
+- Encrypt partial Checkout Blocks draft bank details, restore them through WooCommerce field defaults, and record authorization only on final checkout. Switching away from iDEAL removes the encrypted draft.
+- Authenticate PAY.nl card-token callbacks before storing a reusable token, bind them to the originating order and Sales Location, and resolve the distinct order/transaction identifiers in the documented callback. Reject customer-order-key-only PAY.nl payment notifications; signed order notifications must match service, reference, amount, currency and final status. Valid late card-token callbacks still complete pending automatic setup.
+- Keep untrusted provider error text, unexpected transaction identifiers, recurring tokens and bank details out of payment diagnostics. PAY.nl JSON exchanges receive JSON acknowledgements and are marked processed only after the corresponding order update.
+
+### Added
+
+- Added a read-only, paginated WP-CLI PAY.nl subscription audit with no bank details, tokens, credentials, provider requests or subscription writes. Documented manual/card recovery and the boundary of legacy SEPA enrollment. The automatic capability filter also includes the enabled WSZ test gateway without treating it as a card-token adapter.
+
+### Tests
+
+- Added before/after regressions for stale workers and jobs, suspension, rejection 97, ambiguous first callbacks, merchant-context mismatch, 404 revocation, delayed contradictory statuses, test/live separation, disabled card adapters, provider option 137, read-only audit pagination, unverified card callbacks and sensitive diagnostic values. All requests in automated tests are mocked.
+
+## [0.1.57] - 2026-10-22
+
+### Fixed
+
+- Separated completion of finite subscription payments from expiry of prepaid service. The final required payment clears the next-payment date and collection jobs, while the subscription stays active until its existing end date. Payment at or after that date expires normally without extending the term.
+- Shared idempotent cycle completion between ordinary, asynchronous and successful retry payments. Fully paid plans reject stale renewal/retry dispatch and early renewal, including one-payment plans; cancelled subscriptions are not reactivated by late callbacks.
+- Revoked a completed PAY.nl SEPA mandate without expiring the remaining service period. Replayed callbacks do not submit another collection or repeat successful mandate revocation. Existing expired records are not bulk-reactivated.
+
+### Tests
+
+- Reproduced the defect with ten failing regression cases before the fix, covering all three completion paths, future/due/overdue end dates and one-payment activation. Added coverage for native date clearing, stale retries, direct dispatch, early renewal and SEPA mandate completion; retained existing gateway and open-ended scheduling checks.
+
+- Verified a real hosted PAY.nl iDEAL sandbox signup through local WooCommerce checkout: EUR 50, provider PAID/test mode, native local processing and subscription activation. Public webhook delivery and automatic SEPA settlement remain staging acceptance requirements.
+
+## [0.1.56] - 2026-10-22
+
+### Added
+
+- Added an opt-in PAY.nl SEPA integration for iDEAL signup followed by bank renewals. Checkout collects explicit mandate consent, account holder, IBAN and BIC; encrypted authorization is bound to the paid initial order and customer. Existing iDEAL subscriptions are not enrolled automatically.
+- Added classic checkout and WooCommerce 9.9+ Checkout Block consent fields, with server-side validation and a separate automatic-renewal capability filter. iDEAL remains excluded from the card-token adapter.
+- Used flexible PAY.nl mandates so WSZ retains ownership of WooCommerce amounts, billing intervals and finite payment counts. The first bank renewal creates the mandate and its initial debit; later renewals add one debit after the first has settled. No fixed customer, price, product or term is embedded.
+- Added collection notices, advance preparation, an internal SEPA renewal gateway, authenticated bank-status verification, polling, refusal/reversal handling and mandate revocation on cancellation or payment-method change. Bank collection requests are blocked in PAY.nl/WSZ test modes; tests use mocked HTTP.
+
+### Fixed
+
+- Replaced the encrypted SEPA authorization blob in the subscription admin profile with a short storage-status label.
+- Kept asynchronous bank renewals on hold while pending or uncertain, prevented duplicate renewal dispatch and card retry attempts, and completed billing cycles once after verified settlement. Late settlement does not reactivate cancelled subscriptions.
+- Excluded SEPA orders and their authorized signup orders from the generic webhook's order-key/card-verifier path; only the native initial-payment verification and dedicated authenticated SEPA reconciliation apply.
+
+### Tests
+
+- Added mocked SEPA coverage for varied renewal totals, consent and encrypted ownership, classic/Store API checkout, first versus subsequent debits, pending/uncertain responses, forged exchanges, cancellations, returns, recovery and gateway separation. Added monthly/annual/fortnightly asynchronous accounting and finite-term checks; retained card, Stripe, Mollie and existing gateway regressions.
+
+## [0.1.55] - 2026-10-22
+
+### Fixed
+
+- Separated PAY.nl provider identification from card recurring capability. Only the supported Visa/Mastercard gateway IDs and explicitly registered extensions use the built-in card-token adapter; the `pay_gateway_` prefix alone no longer opts in iDEAL or other payment methods.
+- Prevented automatic-renewal activation from gateway registration or an unvalidated numeric token ID. PAY.nl cards require a saved, customer-owned token for the same gateway with a documented `VY-XXXX-XXXX-XXXX` recurring ID.
+- Started PAY.nl subscriptions in manual mode until reusable context is validated. Initial card checkout remains available before token creation; token exchanges and delayed checks safely complete automatic setup, including after the delayed check has already run.
+- Prevented late parent-order callbacks from replacing a different payment method, customer, or newer saved card.
+- Hid unsupported PAY.nl payment methods at subscription checkout when manual renewals are disabled, added classic and Store API validation, and disclosed manual payment expectations in payment method titles/descriptions when allowed. Ordinary product checkout is unchanged.
+- Converted legacy unsupported PAY.nl renewal dispatch to pending manual payment without card-token charges. Existing automatic retries stop after manual fallback; paid renewal orders remain paid. No SEPA mandate integration or bulk subscription migration is included.
+
+### Tests
+
+- Added mocked regressions for iDEAL classification, zero/invalid/mismatched tokens, legacy renewal and retry dispatch, paid-order preservation, supported cards and explicit extensions, checkout policy, and asynchronous token recovery. Retained Stripe, Mollie, and other gateway coverage.
+
 ## [0.1.54] - 2026-05-15
 
 ### Changed

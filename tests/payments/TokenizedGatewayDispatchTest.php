@@ -85,9 +85,26 @@ final class TokenizedGatewayDispatchTest extends TestCase
     {
         unset($GLOBALS['wsz_test_filters']);
         unset($GLOBALS['wsz_admin_test_options']);
+        unset($GLOBALS['wsz_subs_test_options']);
         unset($GLOBALS['wsz_subs_paynl_card_transactions']);
 
         parent::tearDown();
+    }
+
+    public function test_fully_paid_active_subscription_never_dispatches_another_gateway_charge(): void
+    {
+        $sub = $this->createMock(WC_Order::class);
+        $sub->method('get_status')->willReturn('active');
+        $sub->expects($this->never())->method('get_payment_method');
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('has_completed_all_payments')->willReturn(true);
+        $handler = new WSZ_Payment_Handler($manager);
+        $unpaid = new TokenizedGatewayDispatchDummyOrder(20, 'pending');
+        $handler->dispatch_scheduled_payment($sub, $unpaid, 42.5);
+        $this->assertSame('on-hold', $unpaid->get_status());
+        $paid = new TokenizedGatewayDispatchDummyOrder(21, 'processing');
+        $handler->dispatch_scheduled_payment($sub, $paid, 42.5);
+        $this->assertSame('processing', $paid->get_status());
     }
 
     public function test_dispatch_scheduled_payment_routes_registered_tokenized_gateway_directly(): void
@@ -189,6 +206,10 @@ final class TokenizedGatewayDispatchTest extends TestCase
 
     public function test_dispatch_scheduled_payment_routes_dynamic_paynl_gateway_when_tokens_enabled(): void
     {
+        add_filter('wsz_subs_paynl_gateway_ids', static function (array $ids): array {
+            $ids[] = 'pay_gateway_amex';
+            return $ids;
+        });
         $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = array(
             'enable_paynl_tokens' => 'yes',
         );
@@ -287,6 +308,8 @@ final class TokenizedGatewayDispatchTest extends TestCase
 
     public function test_missing_token_failure_does_not_escape_when_status_update_hooks_throw(): void
     {
+        $GLOBALS['wsz_subs_test_options'] = array('enable_paynl_tokens' => 'yes');
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
         $subscription = new TokenizedGatewayDispatchPayNLOrder(
             10519,
             'active',
@@ -326,6 +349,8 @@ final class TokenizedGatewayDispatchTest extends TestCase
 
     public function test_successful_paynl_renewal_logs_transaction_after_order_completion(): void
     {
+        $GLOBALS['wsz_subs_test_options'] = array('enable_paynl_tokens' => 'yes');
+        $GLOBALS['wsz_admin_test_options']['wsz_subs_options'] = $GLOBALS['wsz_subs_test_options'];
         add_filter(
             'wsz_subs_recurring_charge_callback',
             static function () {

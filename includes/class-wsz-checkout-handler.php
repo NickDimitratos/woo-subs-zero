@@ -18,6 +18,11 @@ class WSZ_Checkout_Handler
         add_filter('woocommerce_create_account_default_checked', array($this, 'force_create_account_checked_for_subscription_checkout'), 20);
         add_filter('woocommerce_checkout_posted_data', array($this, 'force_create_account_in_posted_data'), 20);
         add_action('woocommerce_after_checkout_validation', array($this, 'validate_subscription_account_checkout'), 20, 2);
+        add_filter('woocommerce_available_payment_gateways', array($this, 'filter_subscription_payment_gateways'), 20);
+        add_filter('woocommerce_gateway_description', array($this, 'describe_subscription_payment_method'), 20, 2);
+        add_filter('woocommerce_gateway_title', array($this, 'label_subscription_payment_method'), 20, 2);
+        add_action('woocommerce_store_api_checkout_update_order_from_request', array($this, 'validate_store_api_payment_method'), 20, 2);
+        add_action('wp_enqueue_scripts', array($this, 'restrict_paynl_block_payment_methods'), 30);
 
         add_action('woocommerce_new_order', array($this, 'maybe_create_subscriptions_from_new_order'), 20, 2);
         add_action('woocommerce_checkout_order_processed', array($this, 'maybe_create_subscriptions_from_order'), 20, 3);
@@ -67,6 +72,13 @@ class WSZ_Checkout_Handler
      */
     public function validate_subscription_account_checkout(array $posted_data, $errors): void
     {
+        $gateway_id = sanitize_key((string) ($posted_data['payment_method'] ?? ''));
+        if ($this->cart_contains_subscription_items() && $this->is_manual_only_payment_method($gateway_id) && !$this->manual_renewals_enabled()) {
+            if (is_object($errors) && is_callable(array($errors, 'add'))) {
+                $errors->add('wsz_subs_manual_payment_disabled', $this->manual_payment_disabled_message());
+            }
+        }
+
         if (!$this->cart_contains_subscription_items() || $this->is_current_user_logged_in()) {
             return;
         }
@@ -81,6 +93,121 @@ class WSZ_Checkout_Handler
                 __('An account is required when buying a subscription so automatic renewals can store reusable payment context.', 'woo-subzero')
             );
         }
+    }
+
+    public function filter_subscription_payment_gateways(array $gateways): array
+    {
+        if (!$this->cart_contains_subscription_items() || $this->manual_renewals_enabled()) {
+            return $gateways;
+        }
+
+        foreach ($gateways as $gateway_id => $gateway) {
+            if ($this->is_manual_only_payment_method((string) $gateway_id)) {
+                unset($gateways[$gateway_id]);
+            }
+        }
+
+        return $gateways;
+    }
+
+    public function describe_subscription_payment_method(string $description, string $gateway_id): string
+    {
+        if ($this->cart_contains_subscription_items() && class_exists('WSZ_PayNL_SEPA_Checkout') && WSZ_PayNL_SEPA_Checkout::available($gateway_id)) {
+            $description .= ' ' . __('Pay the initial order with iDEAL. Future subscription renewals are collected automatically by SEPA Direct Debit after your explicit mandate consent.', 'woo-subzero');
+        }
+        if ($this->cart_contains_subscription_items() && $this->is_manual_only_payment_method($gateway_id)) {
+            $description .= ' ' . __('Subscription renewals are not collected automatically with this payment method. You must pay each renewal manually.', 'woo-subzero');
+        }
+
+        return $description;
+    }
+
+    public function label_subscription_payment_method(string $title, string $gateway_id): string
+    {
+        if ($this->cart_contains_subscription_items() && $this->is_manual_only_payment_method($gateway_id)) {
+            $title .= ' ' . __('(manual subscription renewals)', 'woo-subzero');
+        }
+
+        return $title;
+    }
+
+    public function validate_store_api_payment_method($order, $request): void
+    {
+        if (!($order instanceof WC_Order) || (!$this->cart_contains_subscription_items() && !$this->contains_subscription_items($order))) {
+            return;
+        }
+
+        $gateway_id = sanitize_key((string) ($request['payment_method'] ?? $order->get_payment_method()));
+        if ($this->is_manual_only_payment_method($gateway_id) && !$this->manual_renewals_enabled()) {
+            throw new \Automattic\WooCommerce\StoreApi\Exceptions\RouteException(
+                'wsz_subs_manual_payment_disabled',
+                $this->manual_payment_disabled_message(),
+                400
+            );
+        }
+    }
+
+    public function restrict_paynl_block_payment_methods(): void
+    {
+        if (!$this->cart_contains_subscription_items() || !function_exists('wp_add_inline_script') || !function_exists('WC')) {
+            return;
+        }
+
+        $wc = WC();
+        $registry = is_object($wc) && is_callable(array($wc, 'payment_gateways')) ? $wc->payment_gateways() : null;
+        if (!is_object($registry) || !is_callable(array($registry, 'payment_gateways'))) {
+            return;
+        }
+
+        $manual_ids = array_values(array_filter(array_keys($registry->payment_gateways()), array($this, 'is_manual_only_payment_method')));
+        if (empty($manual_ids)) {
+            return;
+        }
+
+        $policy = wp_json_encode(array(
+            'gatewayIds' => $manual_ids,
+            'allowManual' => $this->manual_renewals_enabled(),
+            'label' => __('(manual subscription renewals)', 'woo-subzero'),
+            'notice' => __('Subscription renewals are not collected automatically with this payment method. You must pay each renewal manually.', 'woo-subzero'),
+        ), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+
+        // PAY.nl's Block list uses all registered gateways and raw descriptions, bypassing WooCommerce filters.
+        $script = <<<'JS'
+(function (policy) {
+    if (!Array.isArray(window.paynl_gateways)) return;
+    window.paynl_gateways = window.paynl_gateways.filter(function (method) {
+        return policy.allowManual || policy.gatewayIds.indexOf(method.paymentMethodId) === -1;
+    }).map(function (method) {
+        if (policy.gatewayIds.indexOf(method.paymentMethodId) === -1) return method;
+        var title = String(method.title || '');
+        var description = String(method.description || '');
+        return Object.assign({}, method, {
+            title: title.indexOf(policy.label) === -1 ? title + ' ' + policy.label : title,
+            description: description.indexOf(policy.notice) === -1 ? description + ' ' + policy.notice : description
+        });
+    });
+})(__WSZ_POLICY__);
+JS;
+        wp_add_inline_script('paynl-blocks-js', str_replace('__WSZ_POLICY__', $policy, $script), 'before');
+    }
+
+    private function is_manual_only_payment_method(string $gateway_id): bool
+    {
+        return !(class_exists('WSZ_PayNL_SEPA_Checkout') && WSZ_PayNL_SEPA_Checkout::available($gateway_id, function_exists('has_block') && has_block('woocommerce/checkout')))
+            && class_exists('WSZ_PayNL_Gateway_Integration')
+            && WSZ_PayNL_Gateway_Integration::is_manual_only_gateway_id($gateway_id);
+    }
+
+    private function manual_renewals_enabled(): bool
+    {
+        $settings = get_option('wsz_subs_options', array());
+
+        return is_array($settings) && 'yes' === ($settings['enable_manual_renewals'] ?? 'no');
+    }
+
+    private function manual_payment_disabled_message(): string
+    {
+        return __('This PAY.nl payment method requires manual subscription renewal payments, which this store does not allow. Choose a supported automatic payment method.', 'woo-subzero');
     }
 
     /**
@@ -344,7 +471,7 @@ class WSZ_Checkout_Handler
         $order->save();
     }
 
-    private function contains_subscription_items(WC_Order $order): bool
+    public function contains_subscription_items(WC_Order $order): bool
     {
         foreach ($order->get_items('line_item') as $item) {
             $product = $item->get_product();

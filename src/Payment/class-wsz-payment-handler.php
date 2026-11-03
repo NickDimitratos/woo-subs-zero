@@ -2,6 +2,8 @@
 
 defined('ABSPATH') || exit;
 
+require_once __DIR__ . '/Gateway/class-wsz-paynl-sepa.php';
+
 class WSZ_Payment_Handler
 {
     private WSZ_Subscription_Manager $subscription_manager;
@@ -16,6 +18,8 @@ class WSZ_Payment_Handler
 
     private ?WSZ_Tokenized_Gateway $tokenized_gateway = null;
 
+    private ?WSZ_PayNL_SEPA $sepa_gateway = null;
+
     public function __construct(WSZ_Subscription_Manager $subscription_manager)
     {
         $this->subscription_manager = $subscription_manager;
@@ -28,6 +32,9 @@ class WSZ_Payment_Handler
 
         $this->paynl_gateway = new WSZ_PayNL_Gateway_Integration($this->subscription_manager);
         $this->paynl_gateway->init();
+
+        $this->sepa_gateway = new WSZ_PayNL_SEPA($this->subscription_manager);
+        $this->sepa_gateway->init();
 
         $this->stripe_gateway = new WSZ_Stripe_Gateway_Integration();
         $this->stripe_gateway->init();
@@ -49,6 +56,7 @@ class WSZ_Payment_Handler
         add_action('woocommerce_order_status_completed', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 2);
         add_action('wsz_subs_subscription_activated', array($this, 'sync_subscription_from_parent_order'), 20, 1);
         add_action('wsz_subs_check_paynl_parent_order_token', array($this, 'process_delayed_paynl_parent_order_token_check'), 10, 1);
+        add_action('wsz_subs_paynl_token_exchange_saved', array($this, 'sync_subscriptions_from_paid_parent_order'), 20, 1);
         add_filter('woocommerce_subscription_payment_meta', array($this, 'register_subscription_payment_meta'), 10, 2);
     }
 
@@ -62,7 +70,23 @@ class WSZ_Payment_Handler
             return;
         }
 
+        if ($this->subscription_manager->has_completed_all_payments($subscription)) {
+            if (!$renewal_order->is_paid()) {
+                $renewal_order->update_status('on-hold', __('No payment requested: all required subscription payments are complete.', 'woo-subzero'));
+            }
+            return;
+        }
+
         $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+
+        if (WSZ_PayNL_SEPA_Context::valid_for_subscription($subscription) && !$this->subscription_manager->is_manual_renewal($subscription)) {
+            ($this->sepa_gateway ?? new WSZ_PayNL_SEPA($this->subscription_manager))->process_payment($subscription, $renewal_order);
+            return;
+        }
+
+        if ($this->maybe_handle_manual_only_paynl_renewal($subscription, $renewal_order, $gateway_id)) {
+            return;
+        }
 
         if ($this->subscription_manager->is_manual_renewal($subscription)) {
             $renewal_order->update_status(
@@ -233,7 +257,31 @@ class WSZ_Payment_Handler
             return null;
         }
 
+        $gateway_id = sanitize_key((string) $subscription->get_payment_method());
+        if ($this->is_paynl_gateway_id($gateway_id) && WSZ_PayNL_Gateway_Integration::is_supported_gateway_id($gateway_id)
+            && !WSZ_PayNL_Gateway_Integration::has_valid_recurring_payment_token($subscription, (int) $token->get_id())) {
+            return null;
+        }
+
         return $token;
+    }
+
+    public function maybe_handle_manual_only_paynl_renewal(WC_Order $subscription, WC_Order $renewal_order, string $gateway_id = ''): bool
+    {
+        $gateway_id = '' !== $gateway_id ? $gateway_id : sanitize_key((string) $subscription->get_payment_method());
+        if (!class_exists('WSZ_PayNL_Gateway_Integration') || !WSZ_PayNL_Gateway_Integration::is_manual_only_gateway_id($gateway_id)) {
+            return false;
+        }
+
+        $this->subscription_manager->set_manual_renewal($subscription, true);
+        $subscription->update_meta_data('_wsz_manual_renewal_fallback_reason', 'paynl_recurring_unsupported');
+        $subscription->save();
+        if (!$renewal_order->is_paid()) {
+            $renewal_order->update_status('pending', __('This PAY.nl payment method cannot collect subscription renewals automatically. Manual payment is required.', 'woo-subzero'));
+            do_action('wsz_subs_manual_renewal_required', $subscription, $renewal_order);
+        }
+
+        return true;
     }
 
     /**
@@ -271,8 +319,26 @@ class WSZ_Payment_Handler
             );
         }
 
-        if ($this->should_auto_restore_automatic_renewals() && ($token_id > 0 || $gateway_updated)) {
+        $resolved_gateway_id = $gateway_updated ? $gateway_id : sanitize_key((string) $subscription->get_payment_method());
+        $resolved_token_id = $token_id > 0 ? $token_id : $this->subscription_manager->get_payment_token_id($subscription);
+        $is_paynl = $this->is_paynl_gateway_id($resolved_gateway_id);
+        $has_valid_context = $this->has_valid_automatic_payment_context($subscription, $resolved_gateway_id, $resolved_token_id);
+        $awaiting_initial_token = $is_paynl && 'paynl_token_pending' === $subscription->get_meta('_wsz_manual_renewal_fallback_reason', true);
+        $preserve_sepa_manual_choice = WSZ_PayNL_SEPA_Context::INITIAL_GATEWAY === $resolved_gateway_id
+            && 'yes' === $subscription->get_meta('_wsz_paynl_sepa_setup_complete', true)
+            && $this->subscription_manager->is_manual_renewal($subscription);
+
+        if ($has_valid_context && !$preserve_sepa_manual_choice && ($awaiting_initial_token || $this->should_auto_restore_automatic_renewals())) {
             $this->subscription_manager->set_manual_renewal($subscription, false);
+        } elseif ($is_paynl && !$has_valid_context) {
+            $this->subscription_manager->set_manual_renewal($subscription, true);
+            $subscription->update_meta_data(
+                '_wsz_manual_renewal_fallback_reason',
+                WSZ_PayNL_Gateway_Integration::is_manual_only_gateway_id($resolved_gateway_id)
+                    ? 'paynl_recurring_unsupported'
+                    : ($awaiting_initial_token ? 'paynl_token_pending' : 'paynl_token_missing')
+            );
+            $subscription->save();
         }
 
         do_action('wsz_subs_payment_context_updated', $subscription, $token_id, $gateway_id);
@@ -424,6 +490,10 @@ class WSZ_Payment_Handler
                 continue;
             }
 
+            if ($this->is_paynl_gateway_id($gateway_id) && !WSZ_PayNL_Gateway_Integration::can_sync_parent_payment_context($order, $subscription)) {
+                continue;
+            }
+
             $copied = $this->subscription_manager->copy_payment_context_meta($order, $subscription);
 
             if ($token_id > 0 || ('' !== $gateway_id && $this->is_gateway_registered($gateway_id))) {
@@ -452,10 +522,14 @@ class WSZ_Payment_Handler
             return;
         }
 
-        $this->subscription_manager->copy_payment_context_meta($parent_order, $subscription);
-
         $gateway_id = sanitize_key((string) $subscription->get_payment_method());
         $parent_gateway_id = sanitize_key((string) $parent_order->get_payment_method());
+
+        if ($this->is_paynl_gateway_id($parent_gateway_id) && !WSZ_PayNL_Gateway_Integration::can_sync_parent_payment_context($parent_order, $subscription)) {
+            return;
+        }
+
+        $this->subscription_manager->copy_payment_context_meta($parent_order, $subscription);
 
         if ('' === $gateway_id) {
             $gateway_id = $parent_gateway_id;
@@ -553,6 +627,10 @@ class WSZ_Payment_Handler
             $subscription = $this->subscription_manager->get_subscription((int) $subscription_id);
 
             if (!($subscription instanceof WC_Order)) {
+                continue;
+            }
+
+            if (!WSZ_PayNL_Gateway_Integration::can_sync_parent_payment_context($order, $subscription)) {
                 continue;
             }
 
@@ -826,7 +904,7 @@ class WSZ_Payment_Handler
             }
         }
 
-        if ($this->are_paynl_tokens_enabled() && $this->is_paynl_gateway_id($gateway_id)) {
+        if ($this->are_paynl_tokens_enabled() && WSZ_PayNL_Gateway_Integration::is_supported_gateway_id($gateway_id)) {
             return true;
         }
 
@@ -854,6 +932,11 @@ class WSZ_Payment_Handler
         $parent_order = $this->resolve_parent_order($subscription);
 
         if (!($parent_order instanceof WC_Order)) {
+            return 0;
+        }
+
+        if ($this->is_paynl_gateway_id((string) $parent_order->get_payment_method())
+            && !WSZ_PayNL_Gateway_Integration::can_sync_parent_payment_context($parent_order, $subscription)) {
             return 0;
         }
 
@@ -993,7 +1076,7 @@ class WSZ_Payment_Handler
     {
         $gateway_id = sanitize_key($gateway_id);
 
-        if (!$this->is_paynl_gateway_id($gateway_id) || !$this->are_paynl_tokens_enabled()) {
+        if (!WSZ_PayNL_Gateway_Integration::is_supported_gateway_id($gateway_id) || !$this->are_paynl_tokens_enabled()) {
             return;
         }
 
@@ -1050,7 +1133,7 @@ class WSZ_Payment_Handler
     {
         $gateway_id = sanitize_key($gateway_id);
 
-        if (!$this->is_paynl_gateway_id($gateway_id) || !$this->are_paynl_tokens_enabled()) {
+        if (!WSZ_PayNL_Gateway_Integration::is_supported_gateway_id($gateway_id) || !$this->are_paynl_tokens_enabled()) {
             return;
         }
 
@@ -1130,8 +1213,30 @@ class WSZ_Payment_Handler
             return false;
         }
 
-        return is_callable(array('WSZ_PayNL_Gateway_Integration', 'is_supported_gateway_id'))
-            && WSZ_PayNL_Gateway_Integration::is_supported_gateway_id($gateway_id);
+        return WSZ_PayNL_Gateway_Integration::is_paynl_gateway_id($gateway_id);
+    }
+
+    private function has_valid_automatic_payment_context(WC_Order $subscription, string $gateway_id, int $token_id): bool
+    {
+        if (WSZ_PayNL_SEPA_Context::valid_for_subscription($subscription)) {
+            return true;
+        }
+
+        if ($this->is_paynl_gateway_id($gateway_id) && WSZ_PayNL_Gateway_Integration::is_supported_gateway_id($gateway_id)
+            && $this->are_paynl_tokens_enabled()) {
+            return WSZ_PayNL_Gateway_Integration::has_valid_recurring_payment_token($subscription, $token_id);
+        }
+
+        if ($this->is_paynl_gateway_id($gateway_id) && WSZ_PayNL_Gateway_Integration::is_manual_only_gateway_id($gateway_id)) {
+            return false;
+        }
+
+        $token = $token_id > 0 && class_exists('WC_Payment_Tokens') ? WC_Payment_Tokens::get($token_id) : null;
+
+        return $token instanceof WC_Payment_Token
+            && '' !== (string) $token->get_token()
+            && $gateway_id === sanitize_key((string) $token->get_gateway_id())
+            && (int) $subscription->get_customer_id() === (int) $token->get_user_id();
     }
 
     private function are_paynl_tokens_enabled(): bool

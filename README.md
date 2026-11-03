@@ -73,7 +73,9 @@ Woo Subs-Zero can store WooCommerce payment context, but automatic renewals are 
 | Gateway | Compatibility | Notes |
 | --- | --- | --- |
 | WSZ Test Card | Recommended for QA/staging | Built into this plugin. Use it to validate subscription lifecycle, renewal scheduling, retries, and transaction logging without charging real cards. |
-| PAY.nl card gateways (`pay_gateway_*`, including `pay_gateway_visamastercard`, `pay_gateway_visa`, `pay_gateway_mastercard`, and `pay_gateway_creditcardsgrouped`) | Recommended for production after PAY.nl setup | Requires PAY.nl Card-not-present Visa/Mastercard, Tokenization, Create token on transaction, recurring/MIT permission for Card Payment authorize token requests, API credentials (`AT-code:API token`), and the correct Sales Location ID. New subscriptions should be created after the correct PAY.nl Sales Location is configured so the stored `recurring_id` belongs to that Sales Location. |
+| PAY.nl card gateways (`pay_gateway_visamastercard`, `pay_gateway_visa`, `pay_gateway_mastercard`, and `pay_gateway_creditcardsgrouped`) | Requires PAY.nl setup and verified callback staging | Requires PAY.nl Card-not-present Visa/Mastercard, Tokenization, Create token on transaction, recurring/MIT permission for Card Payment authorize token requests, API credentials (`AT-code:API token`), and the correct Sales Location ID. Automatic setup waits for an authenticated callback and valid saved `recurring_id` belonging to the same customer and gateway. Unsigned token callbacks are rejected unless an explicitly trusted verifier is supplied. See [card callback requirements](docs/paynl-sepa.md#paynl-card-callbacks). Additional card IDs require explicit registration through `wsz_subs_paynl_gateway_ids`; the provider prefix does not establish recurring support. |
+| PAY.nl iDEAL signup → SEPA bank renewals | Implemented, opt-in; requires merchant setup and staging acceptance | Enable PAY.nl SEPA separately after PAY.nl approves Direct Debit. EUR only; requires fresh explicit mandate consent, creditor details and bank details at checkout. WSZ uses each renewal order total and the subscription schedule. See [PAY.nl SEPA setup and recovery](docs/paynl-sepa.md). Existing iDEAL subscriptions are not automatically enrolled. |
+| Other unsupported PAY.nl methods (including `pay_gateway_incasso`) / iDEAL without SEPA authorization | Manual subscription renewals only | New unsupported purchases require **Enable manual renewals**. Existing subscriptions fall back to manual payment; a paid initial bank transaction alone is not reusable authorization. |
 | Manual/offline gateways | Supported as manual renewals | Safe for order/subscription tracking, but renewals require manual payment collection. They should not be treated as automatic card renewals. |
 | Stripe (`stripe`) | Supported after Stripe setup | Enable Stripe tokens in WSZ Payment Gateways. Renewals use the saved Stripe customer and payment method to create confirmed off-session PaymentIntents with idempotency. |
 | Mollie Credit Card (`mollie_wc_gateway_creditcard`) | Supported after Mollie recurring setup | Enable Mollie tokens in WSZ Payment Gateways. Renewals use the saved Mollie customer and mandate context to create customer payments with `sequenceType=recurring`. |
@@ -82,6 +84,8 @@ Woo Subs-Zero can store WooCommerce payment context, but automatic renewals are 
 | Other tokenized gateways | Requires custom validation | Gateways can be registered through the `wsz_subs_tokenized_gateway_ids` filter, but each gateway needs a tested recurring-charge implementation and webhook/transaction-ID behavior before production use. |
 
 For production automatic card renewals, validate a full cycle in staging: initial checkout, token exchange, renewal charge, exchange webhook, WooCommerce renewal order transaction ID, and the subscription Card Transactions row.
+
+PAY.nl card [recurring payments](https://developer.pay.nl/docs/recurring-payments) use a card token; bank [direct-debit mandates](https://developer.pay.nl/docs/direct-debit-mandates) are a separate integration, available as an opt-in feature from 0.1.56. For subscriptions affected by the iDEAL misclassification in 0.1.54, follow the [recovery procedure](docs/operations-playbook.md#paynl-ideal-subscriptions-created-before-0155).
 
 ## Usage Guide
 
@@ -104,6 +108,10 @@ Useful queue command:
 Run PHPUnit:
 
 - `./vendor/bin/phpunit -c phpunit.xml.dist`
+
+Run the PAY.nl Checkout Block regressions (Node.js built-in test runner; no npm dependencies):
+
+- `node --test tests/checkout/paynl-block-checkout.test.js`
 
 Run syntax checks:
 

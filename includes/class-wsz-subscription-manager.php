@@ -218,7 +218,18 @@ class WSZ_Subscription_Manager
 
         $subscription->update_meta_data('_wsz_parent_order_id', $order->get_id());
         $subscription->update_meta_data('_wsz_related_order_ids', wp_json_encode(array()));
-        $subscription->update_meta_data('_requires_manual_renewal', 'no');
+        // PAY.nl checkout may complete before its separate card-token exchange arrives.
+        $is_paynl = class_exists('WSZ_PayNL_Gateway_Integration')
+            && WSZ_PayNL_Gateway_Integration::is_paynl_gateway_id((string) $order->get_payment_method());
+        $subscription->update_meta_data('_requires_manual_renewal', $is_paynl ? 'yes' : 'no');
+        if ($is_paynl) {
+            $subscription->update_meta_data(
+                '_wsz_manual_renewal_fallback_reason',
+                WSZ_PayNL_Gateway_Integration::is_manual_only_gateway_id((string) $order->get_payment_method())
+                    ? 'paynl_recurring_unsupported'
+                    : 'paynl_token_pending'
+            );
+        }
         $subscription->update_meta_data('_wsz_start_date', gmdate('Y-m-d H:i:s', $start_timestamp));
         $subscription->update_meta_data('_wsz_next_payment', gmdate('Y-m-d H:i:s', $next_payment_timestamp));
         $subscription->update_meta_data('_wsz_billing_period', $billing_period);
@@ -719,7 +730,7 @@ class WSZ_Subscription_Manager
 
     public function get_next_payment_timestamp($subscription): int
     {
-        if (!($subscription instanceof WC_Order)) {
+        if (!($subscription instanceof WC_Order) || $this->has_completed_all_payments($subscription)) {
             return 0;
         }
 
@@ -759,15 +770,15 @@ class WSZ_Subscription_Manager
 
     public function update_next_payment_timestamp($subscription, int $next_payment_timestamp): void
     {
-        if (!($subscription instanceof WC_Order) || $next_payment_timestamp <= 0) {
+        if (!($subscription instanceof WC_Order) || $next_payment_timestamp < 0) {
             return;
         }
 
-        $gm_date = gmdate('Y-m-d H:i:s', $next_payment_timestamp);
+        $gm_date = $next_payment_timestamp > 0 ? gmdate('Y-m-d H:i:s', $next_payment_timestamp) : '';
 
         if (is_callable(array($subscription, 'update_dates'))) {
             try {
-                $subscription->update_dates(array('next_payment' => $gm_date), 'gmt');
+                $subscription->update_dates(array('next_payment' => $next_payment_timestamp > 0 ? $gm_date : 0), 'gmt');
             } catch (Throwable $throwable) {
                 wc_get_logger()->warning(
                     $throwable->getMessage(),
@@ -788,6 +799,10 @@ class WSZ_Subscription_Manager
         }
 
         $subscription->update_meta_data('_requires_manual_renewal', $enabled ? 'yes' : 'no');
+
+        if ($enabled && 'paynl_token_pending' === $subscription->get_meta('_wsz_manual_renewal_fallback_reason', true)) {
+            $subscription->update_meta_data('_wsz_manual_renewal_fallback_reason', '');
+        }
 
         if (!$enabled) {
             $subscription->update_meta_data('_wsz_manual_renewal_fallback_reason', '');
@@ -1148,6 +1163,16 @@ class WSZ_Subscription_Manager
 
         if ($end_timestamp <= current_time('timestamp', true)) {
             $this->process_expiration($subscription_id);
+            return;
+        }
+
+        $args = array('subscription_id' => $subscription_id);
+        // Repeated final-payment callbacks must not duplicate the end-of-service job.
+        if (function_exists('as_next_scheduled_action')) {
+            if ($end_timestamp === as_next_scheduled_action('wsz_subs_expire_subscription', $args, self::ACTION_GROUP)) {
+                return;
+            }
+        } elseif (function_exists('as_has_scheduled_action') && as_has_scheduled_action('wsz_subs_expire_subscription', $args, self::ACTION_GROUP)) {
             return;
         }
 

@@ -200,6 +200,27 @@ final class RetryManagerTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_fully_paid_active_subscription_rejects_new_and_stale_retry_charges(): void
+    {
+        $sub = new RetryManagerDummyOrder(10, 'active', array('_wsz_total_payments' => 6, '_wsz_completed_payments' => 6));
+        $order = new RetryManagerDummyOrder(20, 'failed', array('_wsz_retry_records' => json_encode(array(
+            1 => array('status' => 'pending'),
+        ))), true);
+        $GLOBALS['wsz_test_orders'][20] = $order;
+        $GLOBALS['wsz_retry_test_orders'][20] = $order;
+        $manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('get_subscription', 'acquire_lock', 'release_lock'))->getMock();
+        $manager->method('get_subscription')->willReturn($sub);
+        $manager->method('acquire_lock')->willReturn(true);
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->never())->method('dispatch_scheduled_payment');
+        $retry = new WSZ_Retry_Manager($manager, $handler);
+        $this->assertFalse($retry->queue_retry($sub, $order));
+        $retry->process_retry(10, 20, 1);
+        $this->assertSame('cancelled', $order->get_retry_records()[1]['status']);
+        $this->assertSame('active', $sub->get_status());
+        $this->assertSame(array(), $this->getScheduledActions());
+    }
+
     public function test_default_retry_profile_matches_expected_intervals(): void
     {
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -512,6 +533,21 @@ final class RetryManagerTest extends TestCase
 
         $this->assertSame('cancelled', $records[1]['status']);
         $this->assertSame('not_eligible', $records[1]['reason']);
+    }
+
+    public function test_retry_loads_current_subscription_only_after_acquiring_its_lock(): void
+    {
+        $locked = false;
+        $subscription = new RetryManagerDummyOrder(10, 'cancelled');
+        $order = new RetryManagerDummyOrder(20, 'pending', array('_wsz_retry_records' => wp_json_encode(array(1 => array('attempt' => 1, 'status' => 'pending')))), true);
+        $GLOBALS['wsz_subs_test_orders'][20] = $order;
+        $manager = $this->createMock(WSZ_Subscription_Manager::class);
+        $manager->method('acquire_lock')->willReturnCallback(static function () use (&$locked) { $locked = true; return true; });
+        $manager->method('get_subscription')->willReturnCallback(function () use (&$locked, $subscription) { $this->assertTrue($locked); return $subscription; });
+        $handler = $this->getMockBuilder(WSZ_Payment_Handler::class)->disableOriginalConstructor()->getMock();
+        $handler->expects($this->never())->method('dispatch_scheduled_payment');
+        (new WSZ_Retry_Manager($manager, $handler))->process_retry(10, 20, 1);
+        $this->assertSame('cancelled', $order->get_retry_records()[1]['status']);
     }
 
     public function test_process_retry_continues_when_failed_status_update_hooks_throw(): void

@@ -877,7 +877,9 @@ class WSZ_Admin_Subscriptions
                         continue;
                     }
 
-                    $rows[$meta_key] = $this->stringify_meta_value($value);
+                    $rows[$meta_key] = '_wsz_paynl_sepa_authorization' === $meta_key
+                        ? __('Encrypted SEPA authorization stored.', 'woo-subzero')
+                        : $this->stringify_meta_value($value);
                 }
             }
         }
@@ -1066,6 +1068,7 @@ class WSZ_Admin_Subscriptions
             $filtered['order_status'] = __('Status', 'woo-subzero');
         }
 
+        $filtered['wsz_payment_method'] = __('Payment Method', 'woo-subzero');
         $filtered['wsz_next_renewal'] = __('Next Renewal', 'woo-subzero');
         $filtered['wsz_upcoming_renewals'] = __('Queued Renewals', 'woo-subzero');
         $filtered['wsz_renewal_orders'] = __('Renewal Orders', 'woo-subzero');
@@ -1101,7 +1104,7 @@ class WSZ_Admin_Subscriptions
         $subscription = $this->subscription_manager->get_subscription($post_id);
 
         if (!($subscription instanceof WC_Order)) {
-            if (in_array($column, array('wsz_next_renewal', 'wsz_upcoming_renewals', 'wsz_renewal_orders', 'wsz_last_card_tx', 'wsz_manual_renewal'), true)) {
+            if (in_array($column, array('wsz_payment_method', 'wsz_next_renewal', 'wsz_upcoming_renewals', 'wsz_renewal_orders', 'wsz_last_card_tx', 'wsz_manual_renewal'), true)) {
                 echo esc_html__('n/a', 'woo-subzero');
             }
 
@@ -1114,6 +1117,14 @@ class WSZ_Admin_Subscriptions
     private function render_subscription_informational_column(string $column, WC_Order $subscription): void
     {
         switch ($column) {
+            case 'wsz_payment_method':
+                $method = trim((string) $subscription->get_payment_method_title());
+                if ('' === $method) {
+                    $method = trim((string) $subscription->get_payment_method());
+                }
+                echo esc_html('' !== $method ? $method : __('Not set', 'woo-subzero'));
+                return;
+
             case 'wsz_next_renewal':
                 $next_payment_timestamp = $this->subscription_manager->get_next_payment_timestamp($subscription);
 

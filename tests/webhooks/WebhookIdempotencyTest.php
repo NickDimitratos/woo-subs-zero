@@ -42,6 +42,57 @@ final class WebhookIdempotencyTest extends TestCase
         $this->assertNotSame($same_payload_key, $changed_state_key);
     }
 
+    public function test_paynl_order_key_without_provider_verification_cannot_mark_paid(): void
+    {
+        $process = proc_open(array(PHP_BINARY, dirname(__DIR__) . '/fixtures/paynl-card-generic-webhook.php', 'unsigned'), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+        $output = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+        $this->assertSame(0, proc_close($process), $errors);
+        $this->assertStringContainsString('ORDER_STATUS=pending', $output);
+    }
+
+    public function test_signed_paynl_order_exchange_verifies_amount_service_and_status(): void
+    {
+        $process = proc_open(array(PHP_BINARY, dirname(__DIR__) . '/fixtures/paynl-card-generic-webhook.php', 'signed'), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+        $output = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+        $this->assertSame(0, proc_close($process), $errors);
+        $this->assertStringContainsString('ORDER_STATUS=processing', $output);
+        $this->assertStringContainsString('"result":true', $output);
+    }
+
+    /** @dataProvider unsafePayNLOrderExchangeProvider */
+    public function test_invalid_or_pending_paynl_order_exchange_cannot_mark_paid(string $case): void
+    {
+        $process = proc_open(array(PHP_BINARY, dirname(__DIR__) . '/fixtures/paynl-card-generic-webhook.php', $case), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+        $output = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+        $this->assertSame(0, proc_close($process), $errors);
+        $this->assertStringContainsString('ORDER_STATUS=pending', $output);
+    }
+
+    public static function unsafePayNLOrderExchangeProvider(): array
+    {
+        return array('tampered signature' => array('signed_tampered'), 'wrong amount' => array('signed_wrong_amount'),
+            'wrong sales location' => array('signed_wrong_service'), 'wrong reference' => array('signed_wrong_reference'),
+            'wrong currency' => array('signed_wrong_currency'), 'pending' => array('signed_pending'));
+    }
+
+    public function test_pending_signed_exchange_is_acknowledged_without_marking_payment_paid(): void
+    {
+        $process = proc_open(array(PHP_BINARY, dirname(__DIR__) . '/fixtures/paynl-card-generic-webhook.php', 'signed_pending'), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+        $output = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+        $this->assertSame(0, proc_close($process), $errors);
+        $this->assertStringContainsString('"result":true', $output);
+        $this->assertStringContainsString('ORDER_STATUS=pending', $output);
+    }
+
+    public function test_late_failed_paynl_exchange_does_not_undo_a_paid_order(): void
+    {
+        $process = proc_open(array(PHP_BINARY, dirname(__DIR__) . '/fixtures/paynl-card-generic-webhook.php', 'signed_after_paid'), array(1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes);
+        $output = stream_get_contents($pipes[1]); $errors = stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+        $this->assertSame(0, proc_close($process), $errors);
+        $this->assertStringContainsString('"result":true', $output);
+        $this->assertStringContainsString('ORDER_STATUS=processing', $output);
+    }
+
     public function test_order_key_validation_rejects_missing_order_key(): void
     {
         $subscription_manager = $this->createMock(WSZ_Subscription_Manager::class);
@@ -168,6 +219,7 @@ final class WebhookIdempotencyTest extends TestCase
             ->method('save');
 
         $subscription = $this->createMock(WC_Order::class);
+        $subscription->method('get_customer_id')->willReturn(8);
         $subscription
             ->expects($this->once())
             ->method('set_payment_method')

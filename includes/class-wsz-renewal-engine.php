@@ -24,12 +24,14 @@ class WSZ_Renewal_Engine
     {
         add_action('wsz_subs_subscription_activated', array($this, 'schedule_first_renewal'), 10, 1);
         add_action('wsz_subs_process_renewal', array($this, 'process_renewal'), 10, 2);
+        add_action('wsz_subs_paynl_sepa_prepare', array($this, 'prepare_sepa_renewal'), 10, 2);
 
         add_action('woocommerce_subscription_status_active', array($this, 'schedule_if_missing'), 10, 1);
         add_action('woocommerce_subscription_status_cancelled', array($this, 'clear_scheduled_renewals'), 10, 1);
         add_action('woocommerce_subscription_status_expired', array($this, 'clear_scheduled_renewals'), 10, 1);
 
         add_action('wsz_subs_retry_payment_complete', array($this, 'handle_retry_payment_complete'), 10, 3);
+        add_action('wsz_subs_async_renewal_payment_complete', array($this, 'handle_async_payment_complete'), 10, 2);
     }
 
     /**
@@ -42,6 +44,11 @@ class WSZ_Renewal_Engine
         }
 
         $this->ensure_finite_term_end_timestamp($subscription);
+
+        if ($this->subscription_manager->has_completed_all_payments($subscription)) {
+            $this->handle_finite_term_boundary($subscription, 0);
+            return;
+        }
 
         $next_timestamp = $this->subscription_manager->get_next_payment_timestamp($subscription);
 
@@ -74,6 +81,11 @@ class WSZ_Renewal_Engine
 
         $this->ensure_finite_term_end_timestamp($subscription);
 
+        if ($this->subscription_manager->has_completed_all_payments($subscription)) {
+            $this->handle_finite_term_boundary($subscription, 0);
+            return;
+        }
+
         $next_timestamp = $this->subscription_manager->get_next_payment_timestamp($subscription);
         if ($next_timestamp <= 0) {
             return;
@@ -89,6 +101,15 @@ class WSZ_Renewal_Engine
         }
 
         $this->schedule_renewal_for_timestamp($subscription, $next_timestamp);
+    }
+
+    public function prepare_sepa_renewal($subscription_id, $schedule_key = ''): void
+    {
+        $subscription = $this->subscription_manager->get_subscription((int) $subscription_id);
+        if ($subscription instanceof WC_Order && WSZ_PayNL_SEPA_Context::valid_for_subscription($subscription)
+            && !$this->subscription_manager->is_manual_renewal($subscription)) {
+            $this->process_renewal($subscription_id, $schedule_key);
+        }
     }
 
     public function process_renewal($subscription_id, $schedule_key = ''): void
@@ -120,6 +141,11 @@ class WSZ_Renewal_Engine
             return;
         }
 
+        if ($this->subscription_manager->has_completed_all_payments($subscription)) {
+            $this->handle_finite_term_boundary($subscription, 0);
+            return;
+        }
+
         $next_payment_timestamp = $this->subscription_manager->get_next_payment_timestamp($subscription);
 
         if ($next_payment_timestamp <= 0) {
@@ -139,8 +165,26 @@ class WSZ_Renewal_Engine
         }
 
         try {
+            // Re-read after locking: a previous worker may have submitted or completed this cycle.
+            $subscription = $this->subscription_manager->get_subscription($subscription_id);
+            if (!($subscription instanceof WC_Order) || 'active' !== preg_replace('/^wc-/', '', sanitize_key((string) $subscription->get_status()))
+                || $this->subscription_manager->get_next_payment_timestamp($subscription) !== $next_payment_timestamp
+                || $this->subscription_manager->has_completed_all_payments($subscription)) {
+                return;
+            }
+            // A bank collection can remain pending for days. Never create another order for it.
+            if ((int) $subscription->get_meta('_wsz_pending_renewal_order_id', true) > 0) {
+                return;
+            }
+
             if ($this->is_duplicate_schedule($subscription, $schedule_key)) {
                 return;
+            }
+            $current_key = (string) $subscription->get_meta('_wsz_next_schedule_key', true);
+            $due_key = $this->build_schedule_key($subscription_id, $next_payment_timestamp);
+            if ('' !== $schedule_key && '' !== $current_key && !hash_equals($current_key, $schedule_key)
+                && !hash_equals($due_key, $schedule_key)) {
+                return; // An older job must not collect the next cycle before its due date.
             }
 
             if ('' !== $schedule_key) {
@@ -175,7 +219,26 @@ class WSZ_Renewal_Engine
                 $renewal_order->save();
             }
 
+            $renewal_order->update_meta_data('_wsz_renewal_schedule_key', $schedule_key);
+            $renewal_order->save();
             $this->safe_dispatch_scheduled_payment($subscription, $renewal_order, $amount);
+
+            if ('yes' === $renewal_order->get_meta('_wsz_async_payment_pending', true)) {
+                return;
+            }
+
+            // Gateway fallback and concurrent status changes may have been persisted on another instance.
+            $subscription = $this->subscription_manager->get_subscription($subscription_id);
+            if (!($subscription instanceof WC_Order)) {
+                return;
+            }
+            if ($renewal_order->is_paid()) {
+                $this->complete_renewal_cycle($subscription, $renewal_order, $schedule_key);
+                return;
+            }
+            if (!in_array($subscription->get_status(), array('active', 'on-hold'), true)) {
+                return;
+            }
 
             if ($this->subscription_manager->is_manual_renewal($subscription)) {
                 if (!$renewal_order->has_status(array('pending'))) {
@@ -191,40 +254,6 @@ class WSZ_Renewal_Engine
                 }
 
                 do_action('wsz_subs_manual_renewal_pending_payment', $subscription, $renewal_order);
-                return;
-            }
-
-            if ($renewal_order->is_paid()) {
-                $subscription->update_meta_data('_wsz_last_processed_schedule_key', $schedule_key);
-                $subscription->save();
-
-                $this->subscription_manager->increment_completed_payments($subscription, 1);
-
-                if ('active' !== $subscription->get_status()) {
-                    $this->subscription_manager->transition_status(
-                        $subscription,
-                        'active',
-                        __('Renewal payment succeeded.', 'woo-subzero')
-                    );
-                }
-
-                $this->retry_manager->cancel_pending_retries($renewal_order);
-
-                if ($this->subscription_manager->has_completed_all_payments($subscription)) {
-                    if ('active' === $subscription->get_status()) {
-                        $this->subscription_manager->transition_status(
-                            $subscription,
-                            'expired',
-                            __('Subscription term completed.', 'woo-subzero')
-                        );
-                    }
-                    do_action('wsz_subs_renewal_payment_complete', $subscription, $renewal_order);
-                    return;
-                }
-
-                $this->advance_next_payment_and_schedule($subscription);
-
-                do_action('wsz_subs_renewal_payment_complete', $subscription, $renewal_order);
                 return;
             }
 
@@ -266,6 +295,84 @@ class WSZ_Renewal_Engine
         }
     }
 
+    public function handle_async_payment_complete($subscription, WC_Order $renewal_order): void
+    {
+        if (!($subscription instanceof WC_Order) || !$renewal_order->is_paid()
+            || (int) $renewal_order->get_meta('_wsz_subscription_id', true) !== $subscription->get_id()
+            || !$this->subscription_manager->acquire_lock('renewal', $subscription->get_id(), 300)) {
+            return;
+        }
+        $subscription_id = (int) $subscription->get_id();
+        try {
+            $preserve_suspension = WSZ_PayNL_SEPA::RENEWAL_GATEWAY_ID === $renewal_order->get_payment_method();
+            if ($preserve_suspension) {
+                // The customer may have suspended or cancelled while the bank settled the debit.
+                $subscription = $this->subscription_manager->get_subscription($subscription_id);
+                if (!($subscription instanceof WC_Order) || $subscription_id !== (int) $subscription->get_id()) {
+                    return;
+                }
+            }
+            $this->complete_renewal_cycle($subscription, $renewal_order, (string) $renewal_order->get_meta('_wsz_renewal_schedule_key', true), $preserve_suspension);
+        } finally {
+            $this->subscription_manager->release_lock('renewal', $subscription_id);
+        }
+    }
+
+    private function complete_renewal_cycle(WC_Order $subscription, WC_Order $order, string $schedule_key, bool $preserve_suspension = false): void
+    {
+        if ('yes' === $order->get_meta('_wsz_cycle_completed', true)) {
+            return;
+        }
+        $subscription->update_meta_data('_wsz_last_processed_schedule_key', $schedule_key);
+        if ((int) $subscription->get_meta('_wsz_pending_renewal_order_id', true) === $order->get_id()) {
+            $subscription->update_meta_data('_wsz_pending_renewal_order_id', 0);
+        }
+        $counted_orders = array_map('absint', (array) $subscription->get_meta('_wsz_counted_renewal_ids', true));
+        if ($order->get_id() <= 0 || (!in_array($order->get_id(), $counted_orders, true)
+            && (int) $subscription->get_meta('_wsz_last_counted_renewal_id', true) !== $order->get_id())) {
+            // Keep the per-order ledger on the same subscription save as its payment counter.
+            if ($order->get_id() > 0) {
+                $counted_orders[] = $order->get_id();
+                $subscription->update_meta_data('_wsz_counted_renewal_ids', array_values(array_filter(array_unique($counted_orders))));
+                $subscription->update_meta_data('_wsz_last_counted_renewal_id', $order->get_id());
+            }
+            $this->subscription_manager->increment_completed_payments($subscription, 1);
+        }
+        $subscription->save();
+        $this->retry_manager->cancel_pending_retries($order);
+        // A late bank confirmation must record the payment without reviving a cancelled contract.
+        if (in_array($subscription->get_status(), array('cancelled', 'expired', 'pending-cancel'), true)) {
+            $order->update_meta_data('_wsz_cycle_completed', 'yes');
+            $order->save();
+            do_action('wsz_subs_renewal_payment_complete', $subscription, $order);
+            return;
+        }
+        $suspended = $preserve_suspension && 'on-hold' === $subscription->get_status();
+        if (!$suspended && 'active' !== $subscription->get_status()) {
+            $this->subscription_manager->transition_status($subscription, 'active', __('Renewal payment succeeded.', 'woo-subzero'));
+        }
+        if ($this->subscription_manager->has_completed_all_payments($subscription)) {
+            $this->ensure_finite_term_end_timestamp($subscription);
+            $this->handle_finite_term_boundary($subscription, 0);
+        } else {
+            $target = (int) $order->get_meta('_wsz_cycle_next_payment_at', true);
+            if ($target <= 0) {
+                $target = $this->calculate_next_payment_timestamp($subscription, 'renewal');
+                $order->update_meta_data('_wsz_cycle_next_payment_at', $target);
+                $order->save();
+            }
+            if ($suspended) {
+                // Keep the cadence but leave collection unscheduled until explicitly reactivated.
+                $this->subscription_manager->update_next_payment_timestamp($subscription, $target);
+            } else {
+                $this->advance_next_payment_and_schedule($subscription, $target);
+            }
+        }
+        $order->update_meta_data('_wsz_cycle_completed', 'yes');
+        $order->save();
+        do_action('wsz_subs_renewal_payment_complete', $subscription, $order);
+    }
+
     /**
      * @param WC_Order $subscription
      */
@@ -276,54 +383,30 @@ class WSZ_Renewal_Engine
         }
 
         $subscription_id = (int) $subscription->get_id();
-        $next_schedule_key = (string) $subscription->get_meta('_wsz_next_schedule_key', true);
-
-        if ('' !== $next_schedule_key) {
-            as_unschedule_all_actions(
-                'wsz_subs_process_renewal',
-                array(
-                    'subscription_id' => $subscription_id,
-                    'schedule_key' => $next_schedule_key,
-                ),
-                WSZ_Subscription_Manager::ACTION_GROUP
-            );
-        }
-
-        if (function_exists('as_get_scheduled_actions') && function_exists('as_unschedule_action')) {
-            $actions = as_get_scheduled_actions(
-                array(
-                    'hook' => 'wsz_subs_process_renewal',
-                    'group' => WSZ_Subscription_Manager::ACTION_GROUP,
-                    'status' => 'pending',
-                    'per_page' => 100,
-                ),
-                'ARRAY_A'
-            );
-
-            if (is_array($actions)) {
-                foreach ($actions as $action) {
-                    $args = isset($action['args']) && is_array($action['args'])
-                        ? $action['args']
-                        : array();
-
-                    if ((int) ($args['subscription_id'] ?? 0) !== $subscription_id) {
-                        continue;
+        foreach (array('wsz_subs_process_renewal', 'wsz_subs_paynl_sepa_prepare') as $hook) {
+            if (function_exists('as_get_scheduled_actions') && function_exists('as_unschedule_action')) {
+                $matching_args = array();
+                $offset = 0;
+                do {
+                    $actions = as_get_scheduled_actions(array(
+                        'hook' => $hook, 'group' => WSZ_Subscription_Manager::ACTION_GROUP,
+                        'status' => 'pending', 'per_page' => 100, 'offset' => $offset,
+                    ));
+                    foreach ($actions as $action) {
+                        $args = $action->get_args();
+                        if ((int) ($args['subscription_id'] ?? 0) === $subscription_id) {
+                            $matching_args[] = $args;
+                        }
                     }
-
-                    as_unschedule_action(
-                        'wsz_subs_process_renewal',
-                        $args,
-                        WSZ_Subscription_Manager::ACTION_GROUP
-                    );
+                    $offset += 100;
+                } while (count($actions) === 100);
+                // Cancel after reading pages so removals cannot shift later offsets.
+                foreach ($matching_args as $args) {
+                    as_unschedule_action($hook, $args, WSZ_Subscription_Manager::ACTION_GROUP);
                 }
             }
+            as_unschedule_all_actions($hook, array('subscription_id' => $subscription_id), WSZ_Subscription_Manager::ACTION_GROUP);
         }
-
-        as_unschedule_all_actions(
-            'wsz_subs_process_renewal',
-            array('subscription_id' => $subscription_id),
-            WSZ_Subscription_Manager::ACTION_GROUP
-        );
 
         $subscription->update_meta_data('_wsz_next_schedule_key', '');
         $subscription->save();
@@ -342,20 +425,7 @@ class WSZ_Renewal_Engine
             sprintf(__('Retry attempt %d succeeded for renewal order %d.', 'woo-subzero'), $attempt, $renewal_order->get_id())
         );
 
-        $this->subscription_manager->increment_completed_payments($subscription, 1);
-
-        if ($this->subscription_manager->has_completed_all_payments($subscription)) {
-            if ('active' === $subscription->get_status()) {
-                $this->subscription_manager->transition_status(
-                    $subscription,
-                    'expired',
-                    __('Subscription term completed.', 'woo-subzero')
-                );
-            }
-            return;
-        }
-
-        $this->advance_next_payment_and_schedule($subscription);
+        $this->complete_renewal_cycle($subscription, $renewal_order, (string) $renewal_order->get_meta('_wsz_renewal_schedule_key', true));
     }
 
     private function create_renewal_order(WC_Order $subscription): ?WC_Order
@@ -611,9 +681,9 @@ class WSZ_Renewal_Engine
         );
     }
 
-    private function advance_next_payment_and_schedule(WC_Order $subscription): void
+    private function advance_next_payment_and_schedule(WC_Order $subscription, ?int $next_payment = null): void
     {
-        $next_payment = $this->calculate_next_payment_timestamp($subscription, 'renewal');
+        $next_payment = $next_payment ?? $this->calculate_next_payment_timestamp($subscription, 'renewal');
 
         if ($next_payment <= 0) {
             return;
@@ -684,6 +754,19 @@ class WSZ_Renewal_Engine
 
     private function handle_finite_term_boundary(WC_Order $subscription, int $boundary_timestamp): void
     {
+        if ($this->subscription_manager->has_completed_all_payments($subscription)) {
+            $this->subscription_manager->update_next_payment_timestamp($subscription, 0);
+            $this->clear_scheduled_renewals($subscription);
+            if ('yes' !== $subscription->get_meta('_wsz_payments_completed', true)) {
+                $subscription->update_meta_data('_wsz_payments_completed', 'yes');
+                $subscription->add_order_note(__('All required payments received. No further renewals will be charged; service continues until the subscription end date.', 'woo-subzero'));
+                $subscription->save();
+                do_action('wsz_subs_subscription_payments_completed', $subscription);
+            }
+            $this->finalize_finite_term_if_due($subscription);
+            return;
+        }
+
         $end_timestamp = $this->subscription_manager->get_end_timestamp($subscription);
 
         if ($end_timestamp > 0) {
@@ -932,6 +1015,7 @@ class WSZ_Renewal_Engine
 
         $subscription->update_meta_data('_wsz_next_schedule_key', $schedule_key);
         $subscription->save();
+        do_action('wsz_subs_renewal_scheduled', $subscription);
     }
 
     private function is_duplicate_schedule(WC_Order $subscription, string $schedule_key): bool

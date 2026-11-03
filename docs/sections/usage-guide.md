@@ -14,7 +14,7 @@ Fixed-term example (4 monthly payments):
 - Billing Period: `month`
 - Subscription Length: `4`
 
-Expected result: the subscription expires at term boundary with no extra renewal cycle.
+Expected result: after the fourth payment, billing stops and the next-payment date is cleared. The subscription stays active until its stored four-month end date, then expires without an extra renewal cycle.
 
 ## Customer-Selected Start Date
 
@@ -32,6 +32,16 @@ Expected result: the subscription expires at term boundary with no extra renewal
 - Renewal payment success marks the renewal paid and schedules the next cycle.
 - Renewal failure transitions to failure handling and retry logic.
 - Retry notifications can be enabled for customer and/or store owner.
+- When manual renewals are enabled, a customer can open **My account → Subscriptions** to see subscription status and pay an outstanding renewal. The renewal order also appears in the regular Orders list.
+- When a manual renewal becomes payable, the customer receives an email with the amount and the order payment link. A failed mail attempt is noted on the order; mail delivery must be configured and monitored by the store. Existing pending renewals do not automatically receive a backdated email.
+- **WooCommerce → Unpaid Renewals** lists linked pending, failed and on-hold renewal orders. A store manager can send the payment email individually for an eligible unpaid manual renewal. Orders with automatic collection, a pending bank collection, an invalid customer link or other ineligible status require review. Sending the email records an order note and does not automatically schedule a backdated reminder. Older email history may be incomplete.
+- Configure **WSZ subscription renewal payment** and **WSZ renewal payment reminder** independently in **WooCommerce → Settings → Emails**. Each has enable/disable, subject, heading, main message, additional content and HTML/plain-text options. The main message supports `{customer_name}`, `{subscription_id}`, and `{amount}`; the payment button stays linked to the renewal order.
+- The reminder is enabled by default and scheduled once, 15 days after the renewal order is created. Change the interval (1–365 days) in the reminder settings. Already-scheduled reminders retain their date; older pending orders are not automatically enrolled. The scheduled action checks the current order and subscription before sending and is cancelled when the order is paid or cancelled. Delivery depends on Action Scheduler and the configured mail transport.
+- A failed reminder send is recorded on the renewal order and retried up to three times, one hour apart. Each attempt checks eligibility again, and payment or order cancellation clears pending retries. If all attempts fail or a retry cannot be scheduled, the renewal order records the failure; monitor mail delivery and scheduled actions.
+- For finite plans, new manual renewal notices display the payment position and the number remaining after that payment when the information is available. The reference number is optional and is read from `_wsz_contract_reference` on the subscription or its line items. Integrations can supply a reference through the `wsz_subs_renewal_contract_reference` filter, which receives the default reference, the subscription and the renewal order. No particular contract system is required.
+- Built-in email text follows the site locale when a translation is available. Dutch translations are bundled; the English source is the fallback. Custom subject, heading and body text entered in settings remain as entered and are not automatically translated.
+- The HTML design is bundled with Woo Subs-Zero and does not depend on Gravity Forms.
+- Once a manual renewal order is confirmed paid, its subscription cycle is completed and the next renewal is scheduled. No automatic bank authorization is created by a manual payment.
 
 ## Webhook Authenticity Contract
 
