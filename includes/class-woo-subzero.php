@@ -81,6 +81,7 @@ final class WSZ_Woo_Subzero
                     'enable_test_cycle_notifications' => 'no',
                     'enable_paynl_tokens' => 'no',
                     'enable_paynl_sepa' => 'no',
+                    'require_paynl_sepa' => 'yes',
                     'paynl_sepa_notice_days' => 14,
                     'enable_stripe_tokens' => 'no',
                     'enable_mollie_tokens' => 'no',
