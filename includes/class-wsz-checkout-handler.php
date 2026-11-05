@@ -113,7 +113,9 @@ class WSZ_Checkout_Handler
     public function describe_subscription_payment_method(string $description, string $gateway_id): string
     {
         if ($this->cart_contains_subscription_items() && class_exists('WSZ_PayNL_SEPA_Checkout') && WSZ_PayNL_SEPA_Checkout::available($gateway_id)) {
-            $description .= ' ' . __('Pay the initial order with iDEAL. Future subscription renewals are collected automatically by SEPA Direct Debit after your explicit mandate consent.', 'woo-subzero');
+            $description .= WSZ_PayNL_SEPA_Checkout::manual_signup_allowed()
+                ? ' ' . __('Pay the initial order with iDEAL. SEPA details and consent are optional and enable automatic renewal payments. Leave all SEPA fields empty to receive a payment link by email for each renewal instead.', 'woo-subzero')
+                : ' ' . __('Pay the initial order with iDEAL. Future subscription renewals are collected automatically by SEPA Direct Debit after your explicit mandate consent.', 'woo-subzero');
         }
         if ($this->cart_contains_subscription_items() && $this->is_manual_only_payment_method($gateway_id)) {
             $description .= ' ' . __('Subscription renewals are not collected automatically with this payment method. You must pay each renewal manually.', 'woo-subzero');

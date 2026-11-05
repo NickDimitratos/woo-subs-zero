@@ -411,6 +411,15 @@ final class AdminSettingsLogsTest extends TestCase
         $this->assertSame('no', $invalid['enable_mollie_tokens'] ?? null);
     }
 
+    public function test_sepa_requirement_defaults_to_required_and_can_be_changed(): void
+    {
+        $settings = new WSZ_Admin_Settings();
+        $this->assertSame('yes', $settings->sanitize_settings(array())['require_paynl_sepa']);
+        $this->assertSame('no', $settings->sanitize_settings(array('require_paynl_sepa' => 'no'))['require_paynl_sepa']);
+        $this->assertSame('yes', $settings->sanitize_settings(array('require_paynl_sepa' => 'yes'))['require_paynl_sepa']);
+        $this->assertSame('yes', $settings->sanitize_settings(array('require_paynl_sepa' => 'unexpected'))['require_paynl_sepa']);
+    }
+
     public function test_partial_payment_gateways_save_preserves_testing_settings(): void
     {
         $GLOBALS['wsz_subs_test_options'] = array(
@@ -495,6 +504,8 @@ final class AdminSettingsLogsTest extends TestCase
 
         $this->assertStringContainsString('Payment Gateways', $output);
         $this->assertStringContainsString('Enable PAY.nl tokens', $output);
+        $this->assertStringContainsString('Require SEPA for iDEAL subscription signups', $output);
+        $this->assertStringContainsString('type="hidden" name="wsz_subs_options[require_paynl_sepa]" value="no"', $output);
         $this->assertStringContainsString('Enable Stripe tokens', $output);
         $this->assertStringContainsString('Enable Mollie tokens', $output);
         $this->assertStringContainsString('enable_paynl_tokens', $output);

@@ -63,3 +63,15 @@ msgstr "U ontvangt deze e-mail omdat een abonnementsverlenging op betaling wacht
 
 msgid "Subscription #%1$d — amount due: %2$s"
 msgstr "Abonnement #%1$d — te betalen bedrag: %2$s"
+
+msgid "Pay the initial order with iDEAL. SEPA details and consent are optional and enable automatic renewal payments. Leave all SEPA fields empty to receive a payment link by email for each renewal instead."
+msgstr "Betaal de eerste bestelling met iDEAL. SEPA-gegevens en toestemming zijn optioneel en maken automatische betalingen voor verlengingen mogelijk. Laat alle SEPA-velden leeg om voor iedere verlenging een betaallink per e-mail te ontvangen."
+
+msgid "Require SEPA for iDEAL subscription signups"
+msgstr "SEPA verplichten bij iDEAL-abonnementen"
+
+msgid "When disabled and manual renewals are enabled, customers may leave all SEPA fields empty and receive renewal payment links by email. Partially completed SEPA details still require valid details and explicit consent."
+msgstr "Als dit is uitgeschakeld en handmatige verlengingen zijn ingeschakeld, mogen klanten alle SEPA-velden leeg laten en ontvangen zij betaallinks per e-mail. Bij gedeeltelijk ingevulde SEPA-gegevens zijn geldige gegevens en uitdrukkelijke toestemming verplicht."
+
+msgid "%s (optional)"
+msgstr "%s (optioneel)"

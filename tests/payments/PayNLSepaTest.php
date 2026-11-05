@@ -72,7 +72,7 @@ final class PayNLSepaTest extends TestCase
             public function api_request_url($endpoint) { return 'https://shop.example/?wc-api=' . $endpoint; }
         };
         $GLOBALS['wsz_admin_test_options'] = array();
-        $GLOBALS['wsz_subs_test_options'] = array('enable_paynl_sepa' => 'yes', 'paynl_sepa_creditor_name' => 'Example Shop', 'paynl_sepa_creditor_id' => 'NL00ZZZ123456780000', 'paynl_sepa_terms_url' => 'https://shop.example/mandate', 'paynl_sepa_notice_days' => 14);
+        $GLOBALS['wsz_subs_test_options'] = array('enable_manual_renewals' => 'yes', 'enable_paynl_sepa' => 'yes', 'require_paynl_sepa' => 'no', 'paynl_sepa_creditor_name' => 'Example Shop', 'paynl_sepa_creditor_id' => 'NL00ZZZ123456780000', 'paynl_sepa_terms_url' => 'https://shop.example/mandate', 'paynl_sepa_notice_days' => 14);
         $this->assertTrue(class_exists('WSZ_PayNL_SEPA'), 'PAY.nl SEPA integration is missing.');
         $this->manager = $this->getMockBuilder(WSZ_Subscription_Manager::class)->onlyMethods(array('get_subscription', 'acquire_lock', 'release_lock'))->getMock();
         $this->manager->method('acquire_lock')->willReturn(true);
@@ -675,7 +675,7 @@ final class PayNLSepaTest extends TestCase
         };
     }
 
-    public function test_classic_checkout_requires_explicit_sepa_consent_only_for_subscription_ideal(): void
+    public function test_classic_checkout_allows_ideal_without_sepa_but_rejects_partial_consent(): void
     {
         $this->subscription_cart();
         $checkout = new WSZ_PayNL_SEPA_Checkout($this->manager);
@@ -689,11 +689,13 @@ final class PayNLSepaTest extends TestCase
         $checkout->validate_classic(array('payment_method' => 'pay_gateway_visa'), $errors);
         $this->assertSame(array(), $errors->codes);
         $checkout->validate_classic(array('payment_method' => 'pay_gateway_ideal'), $errors);
+        $this->assertSame(array(), $errors->codes, 'Blank SEPA details should allow manual renewals.');
+        $checkout->validate_classic(array('payment_method' => 'pay_gateway_ideal', 'wsz_sepa_iban' => 'NL91ABNA0417164300'), $errors);
         $this->assertSame(array('wsz_sepa_consent_required'), $errors->codes);
         $this->assertCount(0, $GLOBALS['wsz_sepa_http']);
     }
 
-    public function test_classic_sepa_fields_render_as_required_without_changing_checkout_validation_rules(): void
+    public function test_classic_sepa_fields_render_as_optional(): void
     {
         $this->subscription_cart();
         $checkout = new WSZ_PayNL_SEPA_Checkout($this->manager);
@@ -703,7 +705,7 @@ final class PayNLSepaTest extends TestCase
             $key = 'wsz_sepa_' . $name;
             $this->assertFalse($fields['order'][$key]['required'], 'WooCommerce must not require SEPA inputs for card payments.');
             $render_args = apply_filters('woocommerce_form_field_args', $fields['order'][$key], $key, null);
-            $this->assertTrue($render_args['required'], 'The visible iDEAL SEPA input must be marked required.');
+            $this->assertFalse($render_args['required'], 'SEPA is optional when manual renewals are allowed.');
         }
         $other = array('required' => false, 'class' => array('form-row-wide'));
         $this->assertSame($other, apply_filters('woocommerce_form_field_args', $other, 'billing_phone', null));
@@ -726,11 +728,83 @@ final class PayNLSepaTest extends TestCase
         $this->assertSame('yes', $this->subscription->get_meta('_requires_manual_renewal'));
     }
 
-    public function test_store_api_cannot_bypass_mandate_consent(): void
+    public function test_store_api_allows_manual_ideal_without_a_mandate(): void
+    {
+        $this->subscription_cart();
+        $this->parent->status = 'pending';
+        (new WSZ_PayNL_SEPA_Checkout($this->manager))->save_store_api($this->parent, array('payment_method' => 'pay_gateway_ideal'));
+        $this->assertSame('', $this->parent->get_meta(WSZ_PayNL_SEPA_Context::AUTH_META));
+        $this->assertTrue($this->manager->is_manual_renewal($this->subscription));
+    }
+
+    public function test_store_api_rejects_partial_sepa_without_explicit_consent(): void
     {
         $this->subscription_cart();
         $this->expectExceptionMessage('explicit mandate consent');
+        (new WSZ_PayNL_SEPA_Checkout($this->manager))->save_store_api($this->parent, array('payment_method' => 'pay_gateway_ideal', 'additional_fields' => array(
+            'woo-subs-zero/sepa-iban' => 'NL91ABNA0417164300',
+        )));
+    }
+
+    public function test_empty_classic_checkout_preserves_manual_mode_and_clears_unpaid_authorization(): void
+    {
+        $this->subscription_cart();
+        $this->parent->status = 'pending';
+        WSZ_PayNL_SEPA_Context::capture($this->parent, array('iban' => 'NL91ABNA0417164300', 'bic' => 'ABNANL2A', 'owner' => 'Test Customer', 'consent' => true));
+        $this->assertNotEmpty(WSZ_PayNL_SEPA_Context::read($this->parent));
+        (new WSZ_PayNL_SEPA_Checkout($this->manager))->save_classic($this->parent, array());
+        $this->assertSame('', $this->parent->get_meta(WSZ_PayNL_SEPA_Context::AUTH_META));
+        $this->adapter->sync_paid_parent(1);
+        $this->assertTrue($this->manager->is_manual_renewal($this->subscription));
+        $this->assertCount(0, $GLOBALS['wsz_sepa_http']);
+    }
+
+    public function test_sepa_remains_required_when_manual_renewals_are_disabled(): void
+    {
+        $this->subscription_cart();
+        $GLOBALS['wsz_subs_test_options']['enable_manual_renewals'] = 'no';
+        $checkout = new WSZ_PayNL_SEPA_Checkout($this->manager);
+        $checkout->init();
+        $fields = $checkout->classic_fields(array());
+        $this->assertTrue(apply_filters('woocommerce_form_field_args', $fields['order']['wsz_sepa_iban'], 'wsz_sepa_iban', null)['required']);
+        $errors = new class { public array $codes = array(); public function add($code, $message) { $this->codes[] = $code; } };
+        $checkout->validate_classic(array('payment_method' => 'pay_gateway_ideal'), $errors);
+        $this->assertSame(array('wsz_sepa_consent_required'), $errors->codes);
+        $checkout->register_block_fields();
+        $this->assertIsArray($GLOBALS['wsz_sepa_fields'][0]['required']);
+    }
+
+    public function test_merchant_can_require_sepa_even_with_manual_renewals_enabled(): void
+    {
+        $this->subscription_cart();
+        $GLOBALS['wsz_subs_test_options']['require_paynl_sepa'] = 'yes';
+        $checkout = new WSZ_PayNL_SEPA_Checkout($this->manager);
+        $checkout->init();
+        $fields = $checkout->classic_fields(array());
+        $this->assertTrue(apply_filters('woocommerce_form_field_args', $fields['order']['wsz_sepa_iban'], 'wsz_sepa_iban', null)['required']);
+        $errors = new class { public array $codes = array(); public function add($code, $message) { $this->codes[] = $code; } };
+        $checkout->validate_classic(array('payment_method' => 'pay_gateway_ideal'), $errors);
+        $this->assertSame(array('wsz_sepa_consent_required'), $errors->codes);
+    }
+
+    public function test_missing_sepa_requirement_setting_preserves_existing_required_behavior(): void
+    {
+        $this->subscription_cart();
+        unset($GLOBALS['wsz_subs_test_options']['require_paynl_sepa']);
+        $errors = new class { public array $codes = array(); public function add($code, $message) { $this->codes[] = $code; } };
+        (new WSZ_PayNL_SEPA_Checkout($this->manager))->validate_classic(array('payment_method' => 'pay_gateway_ideal'), $errors);
+        $this->assertSame(array('wsz_sepa_consent_required'), $errors->codes);
+    }
+
+    public function test_empty_store_api_checkout_discards_prior_unpaid_consent_and_draft(): void
+    {
+        $this->subscription_cart();
+        $this->parent->status = 'pending';
+        WSZ_PayNL_SEPA_Context::capture($this->parent, array('iban' => 'NL91ABNA0417164300', 'bic' => 'ABNANL2A', 'owner' => 'Test Customer', 'consent' => true));
+        WSZ_PayNL_SEPA_Context::save_draft($this->parent, array('iban' => 'NL91ABNA0417164300'));
         (new WSZ_PayNL_SEPA_Checkout($this->manager))->save_store_api($this->parent, array('payment_method' => 'pay_gateway_ideal'));
+        $this->assertSame('', $this->parent->get_meta(WSZ_PayNL_SEPA_Context::AUTH_META));
+        $this->assertSame('', $this->parent->get_meta(WSZ_PayNL_SEPA_Context::DRAFT_META));
     }
 
     public function test_store_api_draft_encrypts_fields_without_accepting_a_mandate(): void
@@ -813,9 +887,10 @@ final class PayNLSepaTest extends TestCase
         $checkout->register_block_fields();
         $this->assertCount(4, $GLOBALS['wsz_sepa_fields']);
         $field = $GLOBALS['wsz_sepa_fields'][0];
-        $this->assertSame('pay_gateway_ideal', $field['required']['properties']['checkout']['properties']['payment_method']['const']);
-        $this->assertTrue($field['required']['properties']['cart']['properties']['extensions']['properties']['woo-subs-zero']['properties']['has_subscription']['const']);
-        $this->assertSame($field['required'], $field['hidden']['not']);
+        $this->assertFalse($field['required']);
+        $condition = $field['hidden']['not'];
+        $this->assertSame('pay_gateway_ideal', $condition['properties']['checkout']['properties']['payment_method']['const']);
+        $this->assertTrue($condition['properties']['cart']['properties']['extensions']['properties']['woo-subs-zero']['properties']['has_subscription']['const']);
         $this->assertSame(array('has_subscription' => false), ($GLOBALS['wsz_sepa_cart_data']['data_callback'])());
         $this->subscription_cart();
         $this->assertSame(array('has_subscription' => true), ($GLOBALS['wsz_sepa_cart_data']['data_callback'])());

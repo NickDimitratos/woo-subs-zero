@@ -60,6 +60,30 @@ final class WSZ_PayNL_SEPA_Checkout
         return array_values(array_unique($ids));
     }
 
+    public static function manual_signup_allowed(): bool
+    {
+        $settings = WSZ_PayNL_SEPA_Context::settings();
+        return 'yes' === ($settings['enable_manual_renewals'] ?? 'no')
+            && 'no' === ($settings['require_paynl_sepa'] ?? 'yes');
+    }
+
+    private function has_sepa_input(array $input): bool
+    {
+        foreach (array('owner', 'iban', 'bic') as $key) {
+            if (isset($input[$key]) && is_scalar($input[$key]) && '' !== trim((string) $input[$key])) {
+                return true;
+            }
+        }
+        return in_array($input['consent'] ?? false, array(true, 1, '1'), true);
+    }
+
+    private function clear_unpaid_authorization(WC_Order $order): void
+    {
+        if (!$order->is_paid()) {
+            $order->delete_meta_data(WSZ_PayNL_SEPA_Context::AUTH_META);
+        }
+    }
+
     private function definitions(): array
     {
         return array(
@@ -86,7 +110,7 @@ final class WSZ_PayNL_SEPA_Checkout
     {
         if (in_array($key, array('wsz_sepa_owner', 'wsz_sepa_iban', 'wsz_sepa_bic', 'wsz_sepa_consent'), true)
             && in_array('wsz-sepa-field', (array) ($args['class'] ?? array()), true)) {
-            $args['required'] = true;
+            $args['required'] = !self::manual_signup_allowed();
         }
         return $args;
     }
@@ -98,6 +122,9 @@ final class WSZ_PayNL_SEPA_Checkout
             return;
         }
         $input = $this->classic_input($posted);
+        if (self::manual_signup_allowed() && !$this->has_sepa_input($input)) {
+            return;
+        }
         if (!WSZ_PayNL_SEPA_Context::valid_iban((string) $input['iban']) || '' === trim((string) $input['owner'])
             || !preg_match('/^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/D', strtoupper(trim((string) $input['bic'])))
             || !in_array($input['consent'], array(true, 1, '1'), true)) {
@@ -109,7 +136,12 @@ final class WSZ_PayNL_SEPA_Checkout
     {
         if ($order instanceof WC_Order && $this->checkout->cart_contains_subscription_items()
             && self::available((string) $order->get_payment_method())) {
-            WSZ_PayNL_SEPA_Context::capture($order, $this->classic_input($posted));
+            $input = $this->classic_input($posted);
+            if (self::manual_signup_allowed() && !$this->has_sepa_input($input)) {
+                $this->clear_unpaid_authorization($order);
+                return;
+            }
+            WSZ_PayNL_SEPA_Context::capture($order, $input);
         }
     }
 
@@ -148,8 +180,8 @@ final class WSZ_PayNL_SEPA_Checkout
         foreach ($this->definitions() as $name => $definition) {
             woocommerce_register_additional_checkout_field($definition + array(
                 'id' => self::PREFIX . $name, 'location' => 'order',
-                'optionalLabel' => $definition['label'],
-                'required' => $condition,
+                'optionalLabel' => sprintf(__('%s (optional)', 'woo-subzero'), $definition['label']),
+                'required' => self::manual_signup_allowed() ? false : $condition,
                 'hidden' => array('not' => $condition),
                 'sanitize_callback' => static fn ($value) => is_string($value) ? sanitize_text_field($value) : $value,
             ));
@@ -192,6 +224,11 @@ final class WSZ_PayNL_SEPA_Checkout
             WSZ_PayNL_SEPA_Context::save_draft($order, $input);
             return; // A draft, including a checked box, is not an accepted mandate.
         }
+        if (self::manual_signup_allowed() && !$this->has_sepa_input($input)) {
+            $this->clear_unpaid_authorization($order);
+            $order->delete_meta_data(WSZ_PayNL_SEPA_Context::DRAFT_META);
+            return;
+        }
         try {
             WSZ_PayNL_SEPA_Context::capture($order, $input);
             $order->delete_meta_data(WSZ_PayNL_SEPA_Context::DRAFT_META);
@@ -205,6 +242,7 @@ final class WSZ_PayNL_SEPA_Checkout
         if (!$this->checkout->cart_contains_subscription_items() || !self::available(WSZ_PayNL_SEPA_Context::INITIAL_GATEWAY)) {
             return;
         }
-        wp_add_inline_script('wc-checkout', "jQuery(function($){function wszSepaFields(){var show=$('input[name=payment_method]:checked').val()==='pay_gateway_ideal';$('.wsz-sepa-field').toggle(show).find('input').prop('disabled',!show).prop('required',show);}$(document.body).on('updated_checkout payment_method_selected',wszSepaFields);wszSepaFields();});", 'after');
+        $required = self::manual_signup_allowed() ? 'false' : 'true';
+        wp_add_inline_script('wc-checkout', "jQuery(function($){function wszSepaFields(){var show=$('input[name=payment_method]:checked').val()==='pay_gateway_ideal';$('.wsz-sepa-field').toggle(show).find('input').prop('disabled',!show).prop('required',show && {$required});}$(document.body).on('updated_checkout payment_method_selected',wszSepaFields);wszSepaFields();});", 'after');
     }
 }

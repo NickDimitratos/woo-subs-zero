@@ -237,12 +237,13 @@ class WSZ_Admin_Settings
 
         foreach (array(
             'enable_paynl_sepa' => __('Enable PAY.nl iDEAL signup with SEPA renewals', 'woo-subzero'),
+            'require_paynl_sepa' => __('Require SEPA for iDEAL subscription signups', 'woo-subzero'),
             'paynl_sepa_creditor_name' => __('SEPA creditor name', 'woo-subzero'),
             'paynl_sepa_creditor_id' => __('SEPA creditor identifier', 'woo-subzero'),
             'paynl_sepa_terms_url' => __('SEPA mandate and cancellation terms URL', 'woo-subzero'),
             'paynl_sepa_notice_days' => __('SEPA advance notice (days)', 'woo-subzero'),
         ) as $key => $label) {
-            $renderer = 'enable_paynl_sepa' === $key ? 'render_checkbox_field' : ('paynl_sepa_notice_days' === $key ? 'render_number_field' : 'render_text_field');
+            $renderer = in_array($key, array('enable_paynl_sepa', 'require_paynl_sepa'), true) ? 'render_checkbox_field' : ('paynl_sepa_notice_days' === $key ? 'render_number_field' : 'render_text_field');
             add_settings_field($key, $label, array($this, $renderer), self::SETTINGS_PAGE, 'wsz_subs_payment_gateways',
                 array('key' => $key, 'description' => $this->get_field_description($key), 'min' => 1, 'max' => 60));
         }
@@ -377,6 +378,7 @@ class WSZ_Admin_Settings
             'enable_test_cycle_notifications' => $this->sanitize_yes_no($settings['enable_test_cycle_notifications']),
             'enable_paynl_tokens' => $this->sanitize_yes_no($settings['enable_paynl_tokens']),
             'enable_paynl_sepa' => $this->sanitize_yes_no($settings['enable_paynl_sepa']),
+            'require_paynl_sepa' => 'no' === $settings['require_paynl_sepa'] ? 'no' : 'yes',
             'paynl_sepa_creditor_name' => sanitize_text_field((string) $settings['paynl_sepa_creditor_name']),
             'paynl_sepa_creditor_id' => strtoupper(preg_replace('/[^A-Z0-9]/i', '', (string) $settings['paynl_sepa_creditor_id'])),
             'paynl_sepa_terms_url' => esc_url_raw((string) $settings['paynl_sepa_terms_url']),
@@ -540,6 +542,7 @@ class WSZ_Admin_Settings
     {
         $descriptions = array(
             'enable_paynl_sepa' => __('Enable only after PAY.nl approves SEPA Direct Debit for this sales location. EUR only; requires explicit customer mandate consent and existing PAY.nl credentials. This feature cannot submit bank collections in PAY.nl checkout test mode or WSZ accelerated test mode.', 'woo-subzero'),
+            'require_paynl_sepa' => __('When disabled and manual renewals are enabled, customers may leave all SEPA fields empty and receive renewal payment links by email. Partially completed SEPA details still require valid details and explicit consent.', 'woo-subzero'),
             'paynl_sepa_creditor_id' => __('Use the creditor identifier confirmed by PAY.nl for the mandate agreement.', 'woo-subzero'),
             'paynl_sepa_terms_url' => __('Public mandate terms, merchant contact and cancellation instructions shown with the customer consent.', 'woo-subzero'),
             'paynl_sepa_notice_days' => __('Defaults to 14 days. Shorten only when the customer mandate agreement permits it. Late preparation delays collection to preserve this notice period.', 'woo-subzero'),
@@ -1085,6 +1088,7 @@ class WSZ_Admin_Settings
             'enable_test_cycle_notifications' => 'no',
             'enable_paynl_tokens' => 'no',
             'enable_paynl_sepa' => 'no',
+            'require_paynl_sepa' => 'yes',
             'paynl_sepa_creditor_name' => '',
             'paynl_sepa_creditor_id' => '',
             'paynl_sepa_terms_url' => '',

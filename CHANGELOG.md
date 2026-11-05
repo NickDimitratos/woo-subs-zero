@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.61] - 2026-11-05
+
+### Added
+
+- Let merchants make iDEAL SEPA signup optional when manual renewals are enabled; customers can then leave all SEPA fields empty and receive renewal payment links by email.
+
+### Security
+
+- Keep SEPA mandatory by default, require valid details and explicit consent whenever SEPA details are entered, and clear stale unpaid authorization when the customer chooses manual renewals.
+
 ## [0.1.60] - 2026-11-05
 
 ### Fixed
