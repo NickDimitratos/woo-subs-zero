@@ -693,6 +693,23 @@ final class PayNLSepaTest extends TestCase
         $this->assertCount(0, $GLOBALS['wsz_sepa_http']);
     }
 
+    public function test_classic_sepa_fields_render_as_required_without_changing_checkout_validation_rules(): void
+    {
+        $this->subscription_cart();
+        $checkout = new WSZ_PayNL_SEPA_Checkout($this->manager);
+        $checkout->init();
+        $fields = $checkout->classic_fields(array());
+        foreach (array('owner', 'iban', 'bic', 'consent') as $name) {
+            $key = 'wsz_sepa_' . $name;
+            $this->assertFalse($fields['order'][$key]['required'], 'WooCommerce must not require SEPA inputs for card payments.');
+            $render_args = apply_filters('woocommerce_form_field_args', $fields['order'][$key], $key, null);
+            $this->assertTrue($render_args['required'], 'The visible iDEAL SEPA input must be marked required.');
+        }
+        $other = array('required' => false, 'class' => array('form-row-wide'));
+        $this->assertSame($other, apply_filters('woocommerce_form_field_args', $other, 'billing_phone', null));
+        $this->assertSame($other, apply_filters('woocommerce_form_field_args', $other, 'wsz_sepa_iban', null), 'Unrelated fields must remain unchanged.');
+    }
+
     public function test_store_api_captures_encrypted_authorization_and_removes_plaintext_extra_fields(): void
     {
         $this->subscription_cart();

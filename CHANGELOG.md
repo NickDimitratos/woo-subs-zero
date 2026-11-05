@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.60] - 2026-11-05
+
+### Fixed
+
+- Mark the classic checkout's iDEAL SEPA account holder, IBAN, BIC and consent fields as required when rendered, while keeping card checkout free of SEPA requirements.
+
 ## [0.1.59] - 2026-10-31
 
 ### Added

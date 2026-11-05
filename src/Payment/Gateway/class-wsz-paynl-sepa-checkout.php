@@ -16,6 +16,7 @@ final class WSZ_PayNL_SEPA_Checkout
     public function init(): void
     {
         add_filter('woocommerce_checkout_fields', array($this, 'classic_fields'));
+        add_filter('woocommerce_form_field_args', array($this, 'mark_classic_fields_required'), 10, 2);
         add_action('woocommerce_after_checkout_validation', array($this, 'validate_classic'), 15, 2);
         add_action('woocommerce_checkout_create_order', array($this, 'save_classic'), 15, 2);
         add_action('woocommerce_store_api_checkout_update_order_from_request', array($this, 'save_store_api'), 15, 2);
@@ -78,6 +79,16 @@ final class WSZ_PayNL_SEPA_Checkout
             $fields['order']['wsz_sepa_' . $name] = $definition + array('required' => false, 'class' => array('form-row-wide', 'wsz-sepa-field'), 'priority' => 130);
         }
         return $fields;
+    }
+
+    /** Mark visible SEPA fields as required without requiring them for card payments. */
+    public function mark_classic_fields_required(array $args, string $key): array
+    {
+        if (in_array($key, array('wsz_sepa_owner', 'wsz_sepa_iban', 'wsz_sepa_bic', 'wsz_sepa_consent'), true)
+            && in_array('wsz-sepa-field', (array) ($args['class'] ?? array()), true)) {
+            $args['required'] = true;
+        }
+        return $args;
     }
 
     public function validate_classic(array $posted, $errors): void
